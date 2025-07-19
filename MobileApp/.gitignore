@@ -1,5 +1,5 @@
-.expo
-node_modules
-npm-debug.log
-yarn-error.log
-dist
+node_modules/
+.expo/
+dist/
+*.log
+.DS_Store

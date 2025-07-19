@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* "dev": "concurrently \"vite\" \"node ./src/deviceLocationSimulator.js\"", */
+
+.leaflet-pane,
+.leaflet-map-pane,
+.leaflet-tile-pane,
+.leaflet-overlay-pane,
+.leaflet-shadow-pane,
+.leaflet-marker-pane,
+.leaflet-tooltip-pane,
+.leaflet-popup-pane {
+    z-index: 0 !important;
+}
+
+/* Add this to your global TailwindCSS (e.g., in src/index.css) */
+@keyframes fade-in {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+}
+.animate-fade-in {
+    animation: fade-in 0.6s ease-out forwards;
+}
+
+.leaflet-control-container .leaflet-routing-container {
+    display: none !important;
+}
+
+@layer utilities {
+    @keyframes radar {
+        0% {
+            transform: scale(0.5);
+            opacity: 0.75;
+        }
+        50% {
+            transform: scale(1.5);
+            opacity: 0.25;
+        }
+        100% {
+            transform: scale(2.5);
+            opacity: 0;
+        }
+    }
+
+    /* 2. Create a utility class that uses it */
+    .animate-radar {
+        animation: radar 2s infinite ease-out;
+    }
+}
+
+:root {
+    --primary-color: #c5a467;
+    --background-color: #e3e3e3;
+    --text-color: #333333;
+    --accent-dark: #333333;
+    --accent-light: #ffffff;
+    --success-color: #4ade80;
+    --error-color: #f87171;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-400: #9ca3af;
+    --gray-500: #6b7280;
+    --gray-600: #4b5563;
+    --gray-700: #374151;
+    --gray-800: #1f2937;
+    --gray-900: #111827;
+}
+
+.bg-background {
+    background-color: var(--background-color);
+}
+
+.bg-primary {
+    background-color: var(--primary-color);
+}
+
+.bg-accent-dark {
+    background-color: var(--accent-dark);
+}
+
+.bg-accent-light {
+    background-color: var(--accent-light);
+}
+
+.bg-gray-700 {
+    background-color: var(--gray-700);
+}
+
+.bg-gray-800 {
+    background-color: var(--gray-800);
+}
+
+.bg-gray-900 {
+    background-color: var(--gray-900);
+}
+
+.text-primary {
+    color: var(--primary-color);
+}
+
+.text-text {
+    color: var(--text-color);
+}
+
+.text-accent-light {
+    color: var(--accent-light);
+}
+
+.text-accent-dark {
+    color: var(--accent-dark);
+}
+
+.text-gray-300 {
+    color: var(--gray-300);
+}
+
+.text-gray-400 {
+    color: var(--gray-400);
+}
+
+.text-gray-500 {
+    color: var(--gray-500);
+}
+
+.border-primary {
+    border-color: var(--primary-color);
+}
+
+.border-gray-700 {
+    border-color: var(--gray-700);
+}
+
+.border-gray-800 {
+    border-color: var(--gray-800);
+}
+
+.hover\:bg-primary-dark:hover {
+    background-color: #b08e4f;
+}
+
+.hover\:bg-gray-700:hover {
+    background-color: var(--gray-700);
+}
+
+.hover\:bg-gray-800:hover {
+    background-color: var(--gray-800);
+}
+
+.hover\:text-primary:hover {
+    color: var(--primary-color);
+}
+
+.hover\:text-primary-light:hover {
+    color: #d1b787;
+}
+
+.bg-primary-dark {
+    background-color: #b08e4f;
+}
+
+.bg-success {
+    background-color: var(--success-color);
+}
+
+.text-success {
+    color: var(--success-color);
+}
+
+/* index.css or App.css */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.3); /* Tailwind's gray-400 */
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    transition: background-color 0.3s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.6); /* darker on hover */
+}
+
+/* Firefox */
+.custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+}

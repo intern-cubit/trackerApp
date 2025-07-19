@@ -1,0 +1,51 @@
+{
+    "name": "frontend",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "simulate": "node deviceLocationSimulator.js",
+        "build": "vite build",
+        "lint": "eslint .",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@react-leaflet/core": "^3.0.0",
+        "@reduxjs/toolkit": "^2.7.0",
+        "clsx": "^2.1.1",
+        "date-fns": "^4.1.0",
+        "framer-motion": "^12.10.3",
+        "leaflet": "^1.9.4",
+        "leaflet-routing-machine": "^3.2.12",
+        "lucide-react": "^0.501.0",
+        "next-themes": "^0.4.6",
+        "node-fetch": "^3.3.2",
+        "react": "^19.0.0",
+        "react-countup": "^6.5.3",
+        "react-datepicker": "^8.3.0",
+        "react-dom": "^19.0.0",
+        "react-hot-toast": "^2.5.2",
+        "react-leaflet": "^5.0.0",
+        "react-leaflet-routing-machine": "^0.0.5",
+        "react-redux": "^9.2.0",
+        "react-router-dom": "^7.5.1",
+        "react-toastify": "^11.0.5",
+        "socket.io-client": "^4.8.1"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.22.0",
+        "@types/react": "^19.0.10",
+        "@types/react-dom": "^19.0.4",
+        "@vitejs/plugin-react": "^4.3.4",
+        "autoprefixer": "^10.4.20",
+        "concurrently": "^9.1.2",
+        "eslint": "^9.22.0",
+        "eslint-plugin-react-hooks": "^5.2.0",
+        "eslint-plugin-react-refresh": "^0.4.19",
+        "globals": "^16.0.0",
+        "postcss": "^8.4.49",
+        "tailwindcss": "^3.4.17",
+        "vite": "^6.3.1"
+    }
+}

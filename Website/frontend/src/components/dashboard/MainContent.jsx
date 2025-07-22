@@ -6,6 +6,7 @@ import NotificationsDropdown from '../NotificationsDropdown';
 import io from 'socket.io-client';
 import LiveTrackerMap from '../LiveTrackerMap';
 import LocationHistoryMap from '../LocationHistoryMap';
+import SecurityPanel from '../SecurityPanel';
 import Bottombar from './Bottombar';
 import { Link } from 'react-router-dom';
 
@@ -108,7 +109,7 @@ const MainContent = ({ tab, setTab, selectedDevice, selectedTrackerId, path, lat
             >
                 <div className="flex items-center gap-2">
                     <h3 className="font-medium" style={currentStyles.headerTextPrimary}>
-                        {tab === 'live' ? 'Live Tracking' : 'Location History'}
+                        {tab === 'live' ? 'Live Tracking' : tab === 'history' ? 'Location History' : 'Security & Remote Control'}
                     </h3>
                     {selectedDevice && (
                         <span className="text-sm" style={currentStyles.headerTextSecondary}>
@@ -171,6 +172,10 @@ const MainContent = ({ tab, setTab, selectedDevice, selectedTrackerId, path, lat
                     <div className="h-full absolute inset-0 bottom-16 md:bottom-0">
                         <LiveTrackerMap selectedDevice={selectedDevice} path={path} latest={latest} deviceDetails={deviceDetails} />
                     </div>
+                ) : tab === 'security' ? (
+                    <div className="h-full absolute inset-0 bottom-16 md:bottom-0 overflow-auto p-4">
+                        <SecurityPanel selectedDevice={selectedDevice} />
+                    </div>
                 ) : selectedTrackerId ? (
                     <div className="h-full absolute inset-0 bottom-16 md:bottom-0">
                         <LocationHistoryMap trackerId={selectedTrackerId} />
@@ -183,7 +188,7 @@ const MainContent = ({ tab, setTab, selectedDevice, selectedTrackerId, path, lat
                             color: currentStyles.mapPlaceholderText
                         }}
                     >
-                        Select a device to view {tab === 'live' ? 'live tracking' : 'location history'}
+                        Select a device to view {tab === 'live' ? 'live tracking' : tab === 'history' ? 'location history' : 'security controls'}
                     </div>
                 )}
                 <Bottombar selectedDevice={selectedDevice} setTab={setTab} tab={tab} />

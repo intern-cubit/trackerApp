@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'; // Import useState and useEffect
-import { History, MapPin, Battery } from 'lucide-react';
+import { History, MapPin, Battery, Shield } from 'lucide-react';
 import { useSelector } from 'react-redux';
 
 const Bottombar = ({ selectedDevice, setTab, tab }) => {
@@ -124,6 +124,28 @@ const Bottombar = ({ selectedDevice, setTab, tab }) => {
                     <History style={getTabStyles('history').icon} />
                 </div>
                 <span style={getTabStyles('history').text}>History</span>
+            </button>
+
+            <button
+                onClick={() => setTab('security')}
+                style={getTabStyles('security').button}
+                onMouseEnter={(e) => {
+                    if (tab !== 'security') { // Only change color on hover if not active
+                        e.currentTarget.querySelector('svg').style.color = currentStyles.tabIconHoverColor;
+                        e.currentTarget.querySelector('span').style.color = currentStyles.tabIconHoverColor;
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (tab !== 'security') {
+                        e.currentTarget.querySelector('svg').style.color = currentStyles.tabIconColor;
+                        e.currentTarget.querySelector('span').style.color = currentStyles.tabTextColor;
+                    }
+                }}
+            >
+                <div style={getTabStyles('security').iconContainer}>
+                    <Shield style={getTabStyles('security').icon} />
+                </div>
+                <span style={getTabStyles('security').text}>Security</span>
             </button>
 
             {selectedDevice && (

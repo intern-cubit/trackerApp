@@ -16,6 +16,8 @@ class SecurityService {
     this.isDeviceLocked = false;
     this.alarmSound = null;
     this.isAlarmPlaying = false;
+    this.vibrationInterval = null; // Store vibration interval reference
+    this.alarmTimeout = null; // Store alarm timeout reference
     
     // Movement detection
     this.movementLockEnabled = false;
@@ -247,8 +249,20 @@ class SecurityService {
           await this.enableUninstallPrevention(false);
           result = { preventUninstall: false };
           break;
+        case 'remote_alarm':
+        case 'stop_alarm':
+        case 'capture-photo':
+        case 'start-video':
+        case 'stop-video':
+        case 'capture_photo':
+        case 'capture_video':
+          // These commands are handled by MediaScreen, ignore them here
+          console.log(`[SecurityService] Command ${type} handled by MediaScreen, ignoring`);
+          return; // Exit without sending acknowledgment
         default:
-          throw new Error(`Unknown command: ${type}`);
+          // Don't throw error for unknown commands, let other services handle them
+          console.log(`[SecurityService] Unknown command: ${type}, ignoring`);
+          return; // Exit without sending acknowledgment
       }
 
       // Send acknowledgment
@@ -560,7 +574,10 @@ class SecurityService {
 
   async triggerAlarm(duration = 30) {
     try {
-      if (this.isAlarmPlaying) return;
+      // Stop any existing alarm first
+      if (this.isAlarmPlaying) {
+        await this.stopAlarm();
+      }
 
       this.isAlarmPlaying = true;
       
@@ -568,14 +585,20 @@ class SecurityService {
       console.log(`Alarm triggered for ${duration} seconds (haptic feedback only)`);
 
       // Continuous vibration pattern
-      const vibrationInterval = setInterval(() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      this.vibrationInterval = setInterval(() => {
+        if (this.isAlarmPlaying) {
+          console.log('Haptics triggered...');
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        } else {
+          console.log('Alarm not playing, skipping haptic');
+        }
       }, 500); // Vibrate every 500ms
+      
+      console.log('Vibration interval created:', !!this.vibrationInterval);
 
       // Stop alarm after duration
-      setTimeout(async () => {
+      this.alarmTimeout = setTimeout(async () => {
         await this.stopAlarm();
-        clearInterval(vibrationInterval);
       }, duration * 1000);
 
       console.log(`Haptic alarm triggered for ${duration} seconds`);
@@ -586,9 +609,29 @@ class SecurityService {
 
   async stopAlarm() {
     try {
-      // No audio to stop, just reset the flag
+      console.log('stopAlarm() called - Current state:', {
+        isAlarmPlaying: this.isAlarmPlaying,
+        hasVibrationInterval: !!this.vibrationInterval,
+        hasAlarmTimeout: !!this.alarmTimeout
+      });
+      
+      // Stop the vibration interval
+      if (this.vibrationInterval) {
+        console.log('Clearing vibration interval...');
+        clearInterval(this.vibrationInterval);
+        this.vibrationInterval = null;
+      }
+      
+      // Clear the alarm timeout
+      if (this.alarmTimeout) {
+        console.log('Clearing alarm timeout...');
+        clearTimeout(this.alarmTimeout);
+        this.alarmTimeout = null;
+      }
+      
+      // Reset the alarm flag
       this.isAlarmPlaying = false;
-      console.log('Haptic alarm stopped');
+      console.log('Haptic alarm stopped - vibration should have ceased');
     } catch (error) {
       console.error('Failed to stop alarm:', error);
     }

@@ -22,6 +22,8 @@ const SecurityPanel = ({ selectedDevice }) => {
   const [securityEvents, setSecurityEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const dispatch = useDispatch();
+  
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
 
   useEffect(() => {
     if (selectedDevice) {
@@ -30,58 +32,148 @@ const SecurityPanel = ({ selectedDevice }) => {
     }
   }, [selectedDevice]);
 
+  // Show device selection prompt if no device is selected
+  if (!selectedDevice) {
+    return (
+      <div className="p-6 bg-white rounded-lg shadow-lg">
+        <div className="text-center">
+          <Shield className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No Device Selected</h3>
+          <p className="text-sm text-gray-500">
+            Please select a device to access security controls and remote alarm features.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const fetchSecurityEvents = async () => {
+    if (!selectedDevice?._id) return;
+    
+    const deviceId = selectedDevice?.tracker?._id || selectedDevice?._id;
+    if (!deviceId) return;
+    
     try {
-      const response = await fetch(`/api/security/events/${selectedDevice._id}`, {
+      const response = await fetch(`${BACKEND_URL}/api/security/events/${deviceId}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log('Security events endpoint not found, security events feature may not be enabled');
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.warn('Response is not JSON, skipping security events');
+        return;
+      }
+      
       const data = await response.json();
       setSecurityEvents(data.events || []);
     } catch (error) {
       console.error('Failed to fetch security events:', error);
+      // Don't show user error for this, it's not critical
     }
   };
 
   const fetchCommandHistory = async () => {
+    if (!selectedDevice?._id) return;
+    
+    const deviceId = selectedDevice?.tracker?._id || selectedDevice?._id;
+    if (!deviceId) return;
+    
     try {
-      const response = await fetch(`/api/security/commands/device/${selectedDevice._id}`, {
+      const response = await fetch(`${BACKEND_URL}/api/security/commands/device/${deviceId}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log('Command history endpoint not found, commands feature may not be enabled');
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.warn('Response is not JSON, skipping command history');
+        return;
+      }
+      
       const data = await response.json();
       setCommands(data.commands || []);
     } catch (error) {
       console.error('Failed to fetch command history:', error);
+      // Don't show user error for this, it's not critical
     }
   };
 
   const sendCommand = async (commandType, parameters = {}) => {
+    console.log(`Sending command: ${commandType}`, parameters);
+    console.log('Selected device:', selectedDevice);
+    
+    // Use the tracker ID from selectedDevice.tracker._id as that's what the backend expects
+    const deviceId = selectedDevice?.tracker?._id || selectedDevice?._id;
+    
+    if (!deviceId) {
+      console.log('Please select a device first');
+      toast.error('Please select a device first');
+      return;
+    }
+    console.log(`Sending command to device ID: ${deviceId}`);
+
     setLoading(true);
     try {
-      const response = await fetch('/api/security/commands', {
+      console.log(`Sending command: ${commandType}`, parameters);
+      const response = await fetch(`${BACKEND_URL}/api/security/commands`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
-          deviceId: selectedDevice._id,
+          deviceId: deviceId,
           commandType,
           parameters
         })
       });
 
-      const data = await response.json();
-      
-      if (response.ok) {
-        toast.success(`${commandType.replace('_', ' ')} command sent successfully`);
-        fetchCommandHistory();
-      } else {
-        toast.error(data.message || 'Failed to send command');
+      console.log('Command response:', response);
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          toast.error('Security commands feature is not available. Please check your server configuration.');
+          return;
+        }
+        
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
       }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        toast.error('Invalid server response format');
+        return;
+      }
+
+      const data = await response.json();
+      console.log(data)
+      toast.success(`${commandType.replace('_', ' ')} command sent successfully`);
+      fetchCommandHistory();
     } catch (error) {
       toast.error('Failed to send command');
       console.error('Command error:', error);
@@ -108,11 +200,11 @@ const SecurityPanel = ({ selectedDevice }) => {
     try {
       const reason = prompt('Enter reason for emergency action:') || 'Emergency action triggered from dashboard';
       
-      const response = await fetch(`/api/security/emergency/${selectedDevice._id}`, {
+      const response = await fetch(`${BACKEND_URL}/api/security/emergency/${selectedDevice._id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({ action, reason })
       });

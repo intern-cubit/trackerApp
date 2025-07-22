@@ -14,7 +14,7 @@ router.get('/events/:deviceId', authMiddleware, asyncHandler(async (req, res) =>
   const { page = 1, limit = 50, eventType, severity, startDate, endDate } = req.query;
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -59,7 +59,7 @@ router.get('/events/detail/:eventId', authMiddleware, asyncHandler(async (req, r
   }
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: event.deviceId._id, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: event.deviceId._id, userId: req.user.id });
   if (!device) {
     return res.status(403).json({ message: 'Access denied' });
   }
@@ -77,7 +77,7 @@ router.patch('/events/:eventId/resolve', authMiddleware, asyncHandler(async (req
   }
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: event.deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: event.deviceId, userId: req.user.id });
   if (!device) {
     return res.status(403).json({ message: 'Access denied' });
   }
@@ -93,9 +93,11 @@ router.patch('/events/:eventId/resolve', authMiddleware, asyncHandler(async (req
 // Send remote command to device
 router.post('/commands', authMiddleware, asyncHandler(async (req, res) => {
   const { deviceId, commandType, parameters } = req.body;
+  console.log(`Received command: ${commandType}`, parameters, deviceId);
+  console.log(`User ID: ${req.user.id}`);
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -105,7 +107,7 @@ router.post('/commands', authMiddleware, asyncHandler(async (req, res) => {
     deviceId,
     commandType,
     parameters: parameters || {},
-    createdBy: req.user._id
+    createdBy: req.user.id
   });
 
   await command.save();
@@ -150,7 +152,7 @@ router.get('/commands/:commandId', authMiddleware, asyncHandler(async (req, res)
   }
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: command.deviceId._id, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: command.deviceId._id, userId: req.user.id });
   if (!device) {
     return res.status(403).json({ message: 'Access denied' });
   }
@@ -164,7 +166,7 @@ router.get('/commands/device/:deviceId', authMiddleware, asyncHandler(async (req
   const { page = 1, limit = 20, status, commandType } = req.query;
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -195,7 +197,7 @@ router.patch('/settings/:deviceId', authMiddleware, asyncHandler(async (req, res
   const { deviceId } = req.params;
   const { securitySettings, performanceSettings, mediaCaptureSettings } = req.body;
 
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -241,7 +243,7 @@ router.get('/analytics/:deviceId', authMiddleware, asyncHandler(async (req, res)
   const { period = '7d' } = req.query;
 
   // Verify device ownership
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -320,7 +322,7 @@ router.post('/emergency/:deviceId', authMiddleware, asyncHandler(async (req, res
   const { deviceId } = req.params;
   const { action, reason } = req.body;
 
-  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user._id });
+  const device = await GpsTracker.findOne({ _id: deviceId, userId: req.user.id });
   if (!device) {
     return res.status(404).json({ message: 'Device not found' });
   }
@@ -336,7 +338,7 @@ router.post('/emergency/:deviceId', authMiddleware, asyncHandler(async (req, res
     deviceId,
     commandType: action,
     parameters: { reason, isEmergency: true },
-    createdBy: req.user._id,
+    createdBy: req.user.id,
     timeout: 10000 // 10 seconds for emergency commands
   });
 

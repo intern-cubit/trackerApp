@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import MediaCaptureService from '../services/MediaCaptureService';
 import MediaCaptureServiceFallback from '../services/MediaCaptureServiceFallback';
 import SocketService from '../services/SocketService';
+import SecurityService from '../services/SecurityService';
 
 const { width } = Dimensions.get('window');
 
@@ -46,10 +47,11 @@ const MediaScreen = () => {
     try {
       await MediaCaptureService.initialize();
       await MediaCaptureServiceFallback.initialize();
-      console.log('✅ Both media services initialized');
+      await SecurityService.initialize();
+      console.log('✅ All services initialized (Media + Security)');
     } catch (error) {
-      console.error('Failed to initialize media service:', error);
-      Alert.alert('Error', 'Failed to initialize camera services');
+      console.error('Failed to initialize services:', error);
+      Alert.alert('Error', 'Failed to initialize camera and security services');
     }
   };
 
@@ -110,6 +112,14 @@ const MediaScreen = () => {
         case 'stop-video':
           console.log('⏹️ Processing stop-video command...');
           await handleRemoteVideoStop(commandId);
+          break;
+        case 'remote_alarm':
+          console.log('🚨 Processing remote alarm command...');
+          await handleRemoteAlarm(commandId, data);
+          break;
+        case 'stop_alarm':
+          console.log('🔇 Processing stop alarm command...');
+          await handleStopAlarm(commandId);
           break;
         case 'stop-remote-session':
           console.log('⏹️ Processing stop-remote-session command...');
@@ -301,6 +311,90 @@ const MediaScreen = () => {
       });
 
       Alert.alert('Error', `Failed to stop video: ${error.message}`);
+    }
+  };
+
+  const handleRemoteAlarm = async (commandId, options) => {
+    try {
+      console.log('🚨 Starting remote alarm...');
+
+      const duration = options?.duration || 30; // Default 30 seconds
+      
+      // Trigger the alarm using SecurityService
+      await SecurityService.triggerAlarm(duration);
+
+      console.log(`✅ Remote alarm started for ${duration} seconds`);
+
+      Alert.alert(
+        'Remote Alarm Started',
+        `Alarm activated for ${duration} seconds by remote command!`,
+        [{ text: 'OK' }]
+      );
+
+      SocketService.emit('command-ack', {
+        commandId,
+        status: 'completed',
+        response: { 
+          alarmStarted: true, 
+          duration: duration,
+          message: `Alarm activated for ${duration} seconds`
+        },
+        timestamp: Date.now()
+      });
+
+    } catch (error) {
+      console.error('Failed to start remote alarm:', error);
+      
+      Alert.alert('Remote Alarm Failed', error.message);
+      
+      SocketService.emit('command-ack', {
+        commandId,
+        status: 'failed',
+        error: error.message,
+        timestamp: Date.now()
+      });
+
+      throw error;
+    }
+  };
+
+  const handleStopAlarm = async (commandId) => {
+    try {
+      console.log('🔇 Stopping remote alarm...');
+      
+      // Stop the alarm using SecurityService
+      await SecurityService.stopAlarm();
+
+      console.log('✅ Remote alarm stopped successfully');
+
+      Alert.alert(
+        'Remote Alarm Stopped', 
+        'Alarm stopped by remote command!'
+      );
+
+      SocketService.emit('command-ack', {
+        commandId,
+        status: 'completed',
+        response: { 
+          alarmStopped: true,
+          message: 'Alarm stopped successfully'
+        },
+        timestamp: Date.now()
+      });
+
+    } catch (error) {
+      console.error('Failed to stop remote alarm:', error);
+      
+      Alert.alert('Stop Alarm Failed', error.message);
+      
+      SocketService.emit('command-ack', {
+        commandId,
+        status: 'failed',
+        error: error.message,
+        timestamp: Date.now()
+      });
+
+      throw error;
     }
   };
 
@@ -548,6 +642,16 @@ const MediaScreen = () => {
             <Text style={styles.featureTitle}>Remote Video Recording</Text>
             <Text style={styles.featureDescription}>
               Dashboard can start/stop video recording
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.featureCard}>
+          <Ionicons name="alarm-outline" size={24} color="#FF5722" />
+          <View style={styles.featureText}>
+            <Text style={styles.featureTitle}>Remote Alarm System</Text>
+            <Text style={styles.featureDescription}>
+              Dashboard can trigger and stop device alarm remotely
             </Text>
           </View>
         </View>

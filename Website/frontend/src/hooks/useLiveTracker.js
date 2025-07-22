@@ -75,17 +75,19 @@ export function useLiveTracker() {
                     timestamp,
                 } = latest;
 
-                dispatch(
-                    updateTrackerLocation({
-                        deviceId: trackerId,
-                        latitude,
-                        longitude,
-                        timestamp,
-                        status,
-                        main,
-                        battery,
-                    })
-                );
+                if (trackerId) {
+                    dispatch(
+                        updateTrackerLocation({
+                            trackerId: trackerId,
+                            latitude,
+                            longitude,
+                            timestamp,
+                            status,
+                            main,
+                            battery,
+                        })
+                    );
+                }
 
                 setLatest([latitude, longitude]);
                 setDeviceDetails({ main, battery, timestamp });
@@ -120,17 +122,19 @@ export function useLiveTracker() {
                 battery,
             } = data;
 
-            dispatch(
-                updateTrackerLocation({
-                    deviceId: trackerId,
-                    latitude,
-                    longitude,
-                    timestamp,
-                    status: "online",
-                    main,
-                    battery,
-                })
-            );
+            if (trackerId) {
+                dispatch(
+                    updateTrackerLocation({
+                        trackerId: trackerId,
+                        latitude,
+                        longitude,
+                        timestamp,
+                        status: "online",
+                        main,
+                        battery,
+                    })
+                );
+            }
 
             setLatest([latitude, longitude]);
             setDeviceDetails({ main, battery, timestamp });

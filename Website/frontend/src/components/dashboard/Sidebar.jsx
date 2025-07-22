@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { X, MapPin, History, Edit, Trash2, Camera } from 'lucide-react';
+import { X, MapPin, History, Edit, Trash2, Camera, Shield } from 'lucide-react';
 import { useSelector, useDispatch } from 'react-redux';
 import DeviceStatus from '../sidebar/DeviceStatus';
 import DeviceSelector from '../sidebar/DeviceSelector';
@@ -56,7 +56,7 @@ const Sidebar = ({ setTab, setSidebarOpen, sidebarOpen, tab }) => {
 
     return (
         <>
-            <style jsx>{`
+            <style>{`
                 :root {
                     /* Light Theme Colors (Default) */
                     --light-color-primary: #3b82f6; /* Blue 500 */
@@ -310,6 +310,14 @@ const Sidebar = ({ setTab, setSidebarOpen, sidebarOpen, tab }) => {
                             label="Location History"
                             active={tab === 'history'}
                             onClick={() => { setTab('history'); setSidebarOpen(false); }}
+                            isDarkMode={isDarkMode}
+                            classes={'w-auto sm:px-4'}
+                        />
+                        <TabButton
+                            icon={<Shield size={18} />}
+                            label="Security & Alarm"
+                            active={tab === 'security'}
+                            onClick={() => { setTab('security'); setSidebarOpen(false); }}
                             isDarkMode={isDarkMode}
                             classes={'w-auto sm:px-4'}
                         />

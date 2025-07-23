@@ -581,27 +581,45 @@ class SecurityService {
 
       this.isAlarmPlaying = true;
       
-      // Use only haptic feedback (no audio required)
-      console.log(`Alarm triggered for ${duration} seconds (haptic feedback only)`);
+      console.log(`🔊 Triggering audio alarm for ${duration} seconds`);
 
-      // Continuous vibration pattern
-      this.vibrationInterval = setInterval(() => {
-        if (this.isAlarmPlaying) {
-          console.log('Haptics triggered...');
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      // Try to start audio alarm first
+      try {
+        const audioSuccess = await MediaCaptureService.startAudioAlarm(duration);
+        
+        if (audioSuccess) {
+          console.log('✅ Audio alarm started successfully');
+          
+          // Add lighter haptic feedback as supplement to audio
+          this.vibrationInterval = setInterval(() => {
+            if (this.isAlarmPlaying) {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            }
+          }, 3000); // Vibrate every 3 seconds as supplement to audio
+          
         } else {
-          console.log('Alarm not playing, skipping haptic');
+          throw new Error('Audio alarm failed to start');
         }
-      }, 500); // Vibrate every 500ms
+      } catch (audioError) {
+        console.warn('⚠️ Audio alarm failed, falling back to haptic only:', audioError.message);
+        
+        // Fallback to intensive haptic feedback
+        this.vibrationInterval = setInterval(() => {
+          if (this.isAlarmPlaying) {
+            console.log('Haptics triggered (fallback mode)...');
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          }
+        }, 500); // Vibrate every 500ms as primary alert when audio fails
+      }
       
-      console.log('Vibration interval created:', !!this.vibrationInterval);
+      console.log('Alarm interval created:', !!this.vibrationInterval);
 
       // Stop alarm after duration
       this.alarmTimeout = setTimeout(async () => {
         await this.stopAlarm();
       }, duration * 1000);
 
-      console.log(`Haptic alarm triggered for ${duration} seconds`);
+      console.log(`🚨 Alarm triggered for ${duration} seconds`);
     } catch (error) {
       console.error('Failed to trigger alarm:', error);
     }
@@ -612,8 +630,20 @@ class SecurityService {
       console.log('stopAlarm() called - Current state:', {
         isAlarmPlaying: this.isAlarmPlaying,
         hasVibrationInterval: !!this.vibrationInterval,
-        hasAlarmTimeout: !!this.alarmTimeout
+        hasAlarmTimeout: !!this.alarmTimeout,
+        audioAlarmPlaying: MediaCaptureService.isAudioAlarmPlaying()
       });
+      
+      // Stop audio alarm first
+      try {
+        if (MediaCaptureService.isAudioAlarmPlaying()) {
+          console.log('🔇 Stopping audio alarm...');
+          await MediaCaptureService.stopAudioAlarm();
+          console.log('✅ Audio alarm stopped');
+        }
+      } catch (audioError) {
+        console.error('Error stopping audio alarm:', audioError);
+      }
       
       // Stop the vibration interval
       if (this.vibrationInterval) {
@@ -631,7 +661,7 @@ class SecurityService {
       
       // Reset the alarm flag
       this.isAlarmPlaying = false;
-      console.log('Haptic alarm stopped - vibration should have ceased');
+      console.log('🔇 Alarm stopped - audio and vibration should have ceased');
     } catch (error) {
       console.error('Failed to stop alarm:', error);
     }

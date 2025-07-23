@@ -320,14 +320,22 @@ const MediaScreen = () => {
 
       const duration = options?.duration || 30; // Default 30 seconds
       
-      // Trigger the alarm using SecurityService
-      await SecurityService.triggerAlarm(duration);
+      // Trigger the audio alarm directly using MediaCaptureService
+      const audioAlarmSuccess = await MediaCaptureService.startAudioAlarm(duration);
+      
+      if (audioAlarmSuccess) {
+        console.log(`✅ Audio alarm started successfully for ${duration} seconds`);
+      } else {
+        console.warn('⚠️ Audio alarm failed, falling back to SecurityService haptic alarm');
+        // Fallback to SecurityService for haptic feedback
+        await SecurityService.triggerAlarm(duration);
+      }
 
       console.log(`✅ Remote alarm started for ${duration} seconds`);
 
       Alert.alert(
         'Remote Alarm Started',
-        `Alarm activated for ${duration} seconds by remote command!`,
+        `Audio alarm activated for ${duration} seconds by remote command!\n\nYou should hear beeping sounds if device is not muted.`,
         [{ text: 'OK' }]
       );
 
@@ -362,14 +370,15 @@ const MediaScreen = () => {
     try {
       console.log('🔇 Stopping remote alarm...');
       
-      // Stop the alarm using SecurityService
+      // Stop both audio alarm and haptic alarm
+      await MediaCaptureService.stopAudioAlarm();
       await SecurityService.stopAlarm();
 
       console.log('✅ Remote alarm stopped successfully');
 
       Alert.alert(
         'Remote Alarm Stopped', 
-        'Alarm stopped by remote command!'
+        'Audio alarm stopped by remote command!'
       );
 
       SocketService.emit('command-ack', {

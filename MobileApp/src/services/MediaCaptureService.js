@@ -97,10 +97,23 @@ class MediaCaptureService {
   }
 
   setCameraRef(ref) {
+    // If we're changing camera ref while recording, clean up first
+    if (this.cameraRef && this.isRecording && ref !== this.cameraRef) {
+      console.warn('⚠️ Camera reference changing while recording, cleaning up...');
+      this.forceStopRecording();
+    }
+    
     this.cameraRef = ref;
     if (ref) {
       console.log('📸 Camera reference set.');
       console.log('📝 Note: Camera permissions should be handled in the Camera component using useCameraPermissions hook');
+    } else {
+      console.log('📸 Camera reference cleared.');
+      // Clean up any ongoing recording when camera ref is removed
+      if (this.isRecording) {
+        console.log('🛑 Cleaning up recording state due to camera ref removal...');
+        this.forceStopRecording();
+      }
     }
   }
 
@@ -195,47 +208,101 @@ class MediaCaptureService {
 
   async stopVideoRecording() {
     try {
+      console.log('🛑 Stopping video recording...');
+      
+      // Reset recording state first to prevent conflicts
+      const wasRecording = this.isRecording;
+      const hadPromise = !!this.currentRecordingPromise;
+      
       if (!this.cameraRef) {
-        console.warn('⚠️ Camera reference not available');
-        throw new Error('Camera reference not available.');
+        console.warn('⚠️ Camera reference not available during stop');
+        // Clean up state even if camera ref is missing
+        this.isRecording = false;
+        this.currentRecordingPromise = null;
+        
+        if (wasRecording) {
+          throw new Error('Camera reference lost during recording. Recording may have been interrupted.');
+        } else {
+          throw new Error('Camera reference not available.');
+        }
       }
-      if (!this.isRecording || !this.currentRecordingPromise) {
+      
+      if (!wasRecording && !hadPromise) {
         console.warn('⚠️ No active video recording to stop');
         this.isRecording = false;
         this.currentRecordingPromise = null;
         throw new Error('No active video recording to stop.');
       }
-      console.log('🛑 Stopping video recording...');
+      
       try {
+        // Set flags to false before stopping to prevent race conditions
         this.isRecording = false;
-        this.cameraRef.stopRecording();
-        const video = await this.currentRecordingPromise;
-        this.currentRecordingPromise = null;
-        if (!video || !video.uri) {
-          throw new Error('Video recording failed - no video data returned.');
+        
+        if (this.cameraRef && this.cameraRef.stopRecording) {
+          this.cameraRef.stopRecording();
         }
+        
+        let video = null;
+        if (this.currentRecordingPromise) {
+          try {
+            video = await this.currentRecordingPromise;
+          } catch (recordingError) {
+            console.warn('Recording promise rejected:', recordingError.message);
+            // Don't throw here, recording might have completed successfully
+          }
+        }
+        
+        // Clear the promise
+        this.currentRecordingPromise = null;
+        
+        if (!video || !video.uri) {
+          console.warn('Video recording completed but no valid video data returned');
+          // Don't throw error if we were just cleaning up state
+          if (wasRecording) {
+            throw new Error('Video recording failed - no video data returned.');
+          } else {
+            return null; // Just cleanup, no actual recording was happening
+          }
+        }
+        
         console.log('✅ Video recording completed:', video.uri);
-        const asset = await MediaLibrary.createAssetAsync(video.uri);
-        console.log('📱 Video saved to gallery');
+        
+        // Save to gallery
+        try {
+          const asset = await MediaLibrary.createAssetAsync(video.uri);
+          console.log('📱 Video saved to gallery');
+        } catch (saveError) {
+          console.warn('Failed to save video to gallery:', saveError.message);
+        }
+        
+        // Upload to server
         try {
           await this.uploadMedia(video.uri, 'video', true);
           console.log('☁️ Video uploaded to server');
         } catch (uploadError) {
           console.warn('⚠️ Video upload failed:', uploadError.message);
         }
+        
         console.log('🎥 Video recording process completed successfully');
         return video;
+        
       } catch (recordingError) {
         console.error('Error during video recording stop:', recordingError);
         this.isRecording = false;
         this.currentRecordingPromise = null;
+        
+        // Handle specific error types
         if (recordingError.message && recordingError.message.includes('RECORD_AUDIO')) {
           throw new Error('Video recording failed due to missing audio permission. Recording was muted but system still requires audio permission.');
+        } else if (recordingError.message && recordingError.message.includes('Camera reference lost')) {
+          throw recordingError; // Re-throw as is
+        } else {
+          throw new Error(`Video recording stop failed: ${recordingError.message}`);
         }
-        throw recordingError;
       }
     } catch (error) {
       console.error('Failed to stop video recording:', error);
+      // Ensure state is cleaned up regardless of error
       this.isRecording = false;
       this.currentRecordingPromise = null;
       throw error;
@@ -385,8 +452,54 @@ class MediaCaptureService {
           return { duration, timestamp: Date.now(), audioMuted: true, method: 'silent-background' };
           
         } catch (silentError) {
-          console.warn('⚠️ Silent video capture failed, this requires camera ref to be available:', silentError.message);
-          throw new Error('Remote video capture requires active camera. Please ensure the camera screen is open or camera permissions are granted.');
+          console.warn('⚠️ Silent video capture failed:', silentError.message);
+          
+          // If video capture fails due to audio permission, try photo capture as fallback
+          if (silentError.message.includes('RECORD_AUDIO') || silentError.message.includes('audio permission')) {
+            console.log('📸 Video failed due to audio permission, attempting photo capture as fallback...');
+            
+            try {
+              const photo = await this.captureSilentBackgroundPhoto();
+              
+              // Save to media library
+              if (photo.uri) {
+                const asset = await MediaLibrary.createAssetAsync(photo.uri);
+                console.log('📱 Fallback photo saved to gallery');
+                
+                // Upload to server
+                try {
+                  await this.uploadMedia(photo.uri, 'photo', true);
+                  console.log('☁️ Fallback photo uploaded to server');
+                } catch (uploadError) {
+                  console.warn('⚠️ Photo upload failed:', uploadError.message);
+                }
+              }
+              
+              SocketService.emit('media-captured', {
+                type: 'photo', // Note: type is photo, not video
+                timestamp: Date.now(),
+                isRemote: true,
+                status: 'completed_fallback',
+                method: 'photo-fallback-from-video',
+                originalRequest: 'video',
+                fallbackReason: 'audio_permission_denied'
+              });
+              
+              console.log('✅ Remote capture completed with photo fallback due to video permission issues.');
+              return { 
+                type: 'photo',
+                timestamp: Date.now(), 
+                method: 'photo-fallback-from-video',
+                fallbackReason: 'audio_permission_denied'
+              };
+              
+            } catch (photoError) {
+              console.error('❌ Photo fallback also failed:', photoError.message);
+              throw new Error(`Remote video capture failed due to audio permission, and photo fallback also failed: ${photoError.message}`);
+            }
+          } else {
+            throw new Error('Remote video capture requires active camera. Please ensure the camera screen is open or camera permissions are granted.');
+          }
         }
       }
       
@@ -470,6 +583,38 @@ class MediaCaptureService {
 
   hasRequiredPermissions() {
     return this.hasPermissions;
+  }
+
+  // Force cleanup of any recording state (useful when camera is reset)
+  forceStopRecording() {
+    try {
+      console.log('🛑 Force stopping/cleaning up recording state...');
+      
+      const wasRecording = this.isRecording;
+      
+      // Reset all recording state
+      this.isRecording = false;
+      this.currentRecordingPromise = null;
+      
+      // Try to stop camera recording if possible
+      if (this.cameraRef && this.cameraRef.stopRecording && wasRecording) {
+        try {
+          this.cameraRef.stopRecording();
+          console.log('📹 Camera recording stopped during force cleanup');
+        } catch (stopError) {
+          console.warn('Could not stop camera recording during force cleanup:', stopError.message);
+        }
+      }
+      
+      console.log('✅ Recording state cleaned up successfully');
+      return true;
+    } catch (error) {
+      console.error('Error during force cleanup:', error);
+      // Ensure state is reset even if cleanup fails
+      this.isRecording = false;
+      this.currentRecordingPromise = null;
+      return false;
+    }
   }
 
   // New method for silent background media capture using expo-av
@@ -584,7 +729,15 @@ class MediaCaptureService {
       }
       
       if (this.isRecording) {
-        throw new Error('Cannot start silent video capture: Already recording.');
+        console.warn('⚠️ Already recording, attempting to clean up first...');
+        try {
+          // Force cleanup instead of trying to stop normally
+          this.forceStopRecording();
+        } catch (stopError) {
+          console.warn('Failed to cleanup existing recording:', stopError.message);
+        }
+        // Wait a moment for cleanup to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
       // Use the existing camera ref to record silently
@@ -595,34 +748,53 @@ class MediaCaptureService {
       };
       
       console.log('🔇 Starting silent background video recording...');
-      const recordingPromise = this.cameraRef.recordAsync(recordingOptions);
-      this.isRecording = true;
-      this.currentRecordingPromise = recordingPromise;
       
-      // Auto-stop after duration
-      return new Promise((resolve, reject) => {
-        setTimeout(async () => {
-          try {
-            this.isRecording = false;
-            this.cameraRef.stopRecording();
-            const video = await this.currentRecordingPromise;
-            this.currentRecordingPromise = null;
-            
-            if (!video || !video.uri) {
-              throw new Error('Silent background video capture failed - no video data returned.');
+      try {
+        const recordingPromise = this.cameraRef.recordAsync(recordingOptions);
+        this.isRecording = true;
+        this.currentRecordingPromise = recordingPromise;
+        
+        // Auto-stop after duration
+        return new Promise((resolve, reject) => {
+          setTimeout(async () => {
+            try {
+              if (!this.isRecording || !this.currentRecordingPromise) {
+                throw new Error('Recording was already stopped or not active');
+              }
+              
+              this.isRecording = false;
+              this.cameraRef.stopRecording();
+              const video = await this.currentRecordingPromise;
+              this.currentRecordingPromise = null;
+              
+              if (!video || !video.uri) {
+                throw new Error('Silent background video capture failed - no video data returned.');
+              }
+              
+              console.log('✅ Silent background video captured:', video.uri);
+              resolve({ uri: video.uri, type: 'video' });
+              
+            } catch (error) {
+              console.error('Failed to complete silent background video capture:', error);
+              this.isRecording = false;
+              this.currentRecordingPromise = null;
+              reject(error);
             }
-            
-            console.log('✅ Silent background video captured:', video.uri);
-            resolve({ uri: video.uri, type: 'video' });
-            
-          } catch (error) {
-            console.error('Failed to complete silent background video capture:', error);
-            this.isRecording = false;
-            this.currentRecordingPromise = null;
-            reject(error);
-          }
-        }, duration * 1000);
-      });
+          }, duration * 1000);
+        });
+        
+      } catch (recordError) {
+        this.isRecording = false;
+        this.currentRecordingPromise = null;
+        
+        if (recordError.message.includes('RECORD_AUDIO')) {
+          throw new Error('Video recording failed due to missing audio permission. Please grant microphone permission in device settings or use photo capture instead.');
+        } else if (recordError.message.includes('CAMERA')) {
+          throw new Error('Video recording failed due to missing camera permission. Please grant camera permission in device settings.');
+        } else {
+          throw new Error(`Video recording failed: ${recordError.message}`);
+        }
+      }
       
     } catch (error) {
       console.error('❌ Failed to capture silent background video:', error);
@@ -837,11 +1009,27 @@ class MediaCaptureService {
         silentCapture: true,
         backgroundCapture: !!this.cameraRef,
         audioAlarm: true,
-        videoRecording: true,
+        videoRecording: !!this.cameraRef, // Requires camera ref and may need audio permission
         photoCapture: true,
-        trueSilentCapture: !!this.cameraRef // No user interaction required
+        trueSilentCapture: !!this.cameraRef, // No user interaction required
+        photoFallbackForVideo: true // Can fallback to photo if video fails
       }
     };
+  }
+
+  // Check if video recording is likely to work (this is a best-effort check)
+  async checkVideoRecordingSupport() {
+    try {
+      if (!this.cameraRef) {
+        return { supported: false, reason: 'No camera reference available' };
+      }
+      
+      // We can't easily check audio permissions without attempting to record
+      // So we return true if camera ref is available
+      return { supported: true, reason: 'Camera reference available' };
+    } catch (error) {
+      return { supported: false, reason: error.message };
+    }
   }
 
   // Removed checkNotificationPermissions and requestNotificationPermissions as notifications are not used for alarm.

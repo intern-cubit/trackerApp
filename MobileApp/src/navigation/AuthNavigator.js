@@ -10,9 +10,12 @@ import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
 import DeviceRegistrationScreen from '../screens/DeviceRegistrationScreen';
 import MainTabNavigator from '../screens/MainTabNavigator';
+import LockScreen from '../screens/LockScreen';
 
 // Services
 import { DeviceIdentityService } from '../services/DeviceIdentityService';
+import SecurityService from '../services/SecurityService';
+import SocketService from '../services/SocketService';
 import { API_ENDPOINTS } from '../config/api';
 
 const Stack = createNativeStackNavigator();
@@ -21,19 +24,45 @@ const AuthNavigator = () => {
   const { isAuthenticated } = useSelector((state) => state.auth);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeviceActivated, setIsDeviceActivated] = useState(false);
+  const [isDeviceLocked, setIsDeviceLocked] = useState(false);
 
   useEffect(() => {
     checkActivationStatus();
+    checkLockStatus();
+    
+    // Listen for lock state changes
+    const handleLockStateChange = (data) => {
+      console.log('🔒 Navigation received lock state change:', data);
+      setIsDeviceLocked(data.isLocked);
+    };
+    
+    SocketService.on('device-lock-state-changed', handleLockStateChange);
+    
+    return () => {
+      SocketService.off('device-lock-state-changed', handleLockStateChange);
+    };
   }, [isAuthenticated]);
+
+  const checkLockStatus = () => {
+    const lockStatus = SecurityService.isLocked();
+    console.log('📱 Current device lock status:', lockStatus);
+    setIsDeviceLocked(lockStatus);
+  };
 
   // Listen for activation state changes when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
       if (isAuthenticated) {
         checkActivationStatus();
+        checkLockStatus();
       }
     }, [isAuthenticated])
   );
+
+  const handleUnlock = () => {
+    console.log('🔓 Device unlocked from lock screen');
+    setIsDeviceLocked(false);
+  };
 
   const checkActivationStatus = async () => {
     try {
@@ -111,6 +140,11 @@ const AuthNavigator = () => {
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="Register" component={RegisterScreen} />
         </>
+      ) : isDeviceLocked ? (
+        // Device is locked - show lock screen
+        <Stack.Screen name="LockScreen">
+          {(props) => <LockScreen {...props} onUnlock={handleUnlock} />}
+        </Stack.Screen>
       ) : !isDeviceActivated ? (
         // Device activation required (no skip option)
         <Stack.Screen 

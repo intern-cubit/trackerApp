@@ -8,9 +8,9 @@ import {
   Alert,
   Switch,
 } from 'react-native';
-import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
 import SecurityService from '../services/SecurityService';
+import SocketService from '../services/SocketService';
 
 const SecurityScreen = ({ navigation }) => {
   const [settings, setSettings] = useState({
@@ -29,21 +29,57 @@ const SecurityScreen = ({ navigation }) => {
     isAlarmPlaying: false,
   });
 
-  // Local slider states to prevent flickering
-  const [localMovementThreshold, setLocalMovementThreshold] = useState(1.5);
-  const [localMaxFailedAttempts, setLocalMaxFailedAttempts] = useState(3);
-  const [sliderDebounceTimer, setSliderDebounceTimer] = useState(null);
+  // Local states for UI management
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     loadSecuritySettings();
     updateDeviceStatus();
+    
+    // Listen for lock state changes
+    const handleLockStateChange = (data) => {
+      console.log('🔒 Lock state changed:', data);
+      updateDeviceStatus();
+      
+      // Show alert when device is locked remotely
+      if (data.isLocked && data.source === 'remote') {
+        Alert.alert(
+          '🔒 Device Locked Remotely',
+          'Your device has been locked from the dashboard for security.',
+          [
+            {
+              text: 'OK',
+              style: 'default'
+            },
+            {
+              text: 'Emergency Unlock',
+              style: 'destructive',
+              onPress: handleEmergencyUnlock
+            }
+          ]
+        );
+      } else if (data.isLocked && data.source === 'auto-lock') {
+        Alert.alert(
+          '🚨 Auto-Lock Activated',
+          'Device locked due to failed authentication attempts.',
+          [{ text: 'OK' }]
+        );
+      } else if (data.isLocked && data.source === 'movement-lock') {
+        Alert.alert(
+          '📱 Movement Detected',
+          'Device locked due to unauthorized movement.',
+          [{ text: 'OK' }]
+        );
+      }
+    };
+    
+    SocketService.on('device-lock-state-changed', handleLockStateChange);
+    
+    // Cleanup listener on unmount
+    return () => {
+      SocketService.off('device-lock-state-changed', handleLockStateChange);
+    };
   }, []);
-
-  // Update local states when settings change
-  useEffect(() => {
-    setLocalMovementThreshold(settings.movementThreshold);
-    setLocalMaxFailedAttempts(settings.maxFailedAttempts);
-  }, [settings.movementThreshold, settings.maxFailedAttempts]);
 
   const loadSecuritySettings = () => {
     const securitySettings = SecurityService.getSecuritySettings();
@@ -59,50 +95,52 @@ const SecurityScreen = ({ navigation }) => {
   };
 
   const handleSettingChange = async (setting, value) => {
-    const newSettings = { ...settings, [setting]: value };
-    setSettings(newSettings);
+    if (isUpdating) return; // Prevent concurrent updates
+    
+    try {
+      console.log(`Changing setting ${setting} to ${value}`);
+      setIsUpdating(true);
+      
+      // Update UI immediately for better user experience
+      const newSettings = { ...settings, [setting]: value };
+      setSettings(newSettings);
 
-    // Update security service
-    switch (setting) {
-      case 'movementLockEnabled':
-        await SecurityService.enableMovementLock(value);
-        break;
-      case 'dontTouchLockEnabled':
-        await SecurityService.enableDontTouchLock(value);
-        break;
-      case 'usbLockEnabled':
-        await SecurityService.enableUSBLock(value);
-        break;
-      case 'appLockEnabled':
-        await SecurityService.enableAppLock(value);
-        break;
-      case 'movementThreshold':
-        await SecurityService.setMovementThreshold(value);
-        break;
-      case 'maxFailedAttempts':
-        await SecurityService.setMaxFailedAttempts(value);
-        break;
+      // Update security service
+      switch (setting) {
+        case 'movementLockEnabled':
+          await SecurityService.enableMovementLock(value);
+          console.log(`Movement Lock ${value ? 'enabled' : 'disabled'}`);
+          break;
+        case 'dontTouchLockEnabled':
+          await SecurityService.enableDontTouchLock(value);
+          console.log(`Don't Touch Lock ${value ? 'enabled' : 'disabled'}`);
+          break;
+        case 'usbLockEnabled':
+          await SecurityService.enableUSBLock(value);
+          console.log(`USB Lock ${value ? 'enabled' : 'disabled'}`);
+          break;
+        case 'appLockEnabled':
+          await SecurityService.enableAppLock(value);
+          console.log(`App Lock ${value ? 'enabled' : 'disabled'}`);
+          break;
+        default:
+          console.warn(`Unknown setting: ${setting}`);
+      }
+      
+    } catch (error) {
+      console.error(`Failed to change setting ${setting}:`, error);
+      
+      // Revert UI change if the service call failed
+      loadSecuritySettings();
+      
+      Alert.alert(
+        'Error',
+        `Failed to update ${setting}. Please try again.`,
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsUpdating(false);
     }
-  };
-
-  // Debounced handler for slider changes
-  const handleSliderChange = (setting, value) => {
-    // Clear existing timer
-    if (sliderDebounceTimer) {
-      clearTimeout(sliderDebounceTimer);
-    }
-
-    // Update local state immediately for smooth UI
-    if (setting === 'movementThreshold') {
-      setLocalMovementThreshold(value);
-    } else if (setting === 'maxFailedAttempts') {
-      setLocalMaxFailedAttempts(Math.round(value));
-    }
-
-    // Set new timer to update actual settings
-    setSliderDebounceTimer(setTimeout(() => {
-      handleSettingChange(setting, setting === 'maxFailedAttempts' ? Math.round(value) : value);
-    }, 300)); // 300ms debounce
   };
 
   const triggerTestAlarm = () => {
@@ -145,36 +183,17 @@ const SecurityScreen = ({ navigation }) => {
       </View>
       <Switch
         value={value}
-        onValueChange={onValueChange}
+        onValueChange={(newValue) => {
+          console.log(`Toggle ${title} changed from ${value} to ${newValue}`);
+          if (!isUpdating && newValue !== value) {
+            onValueChange(newValue);
+          }
+        }}
         trackColor={{ false: '#E5E5EA', true: '#34C759' }}
         thumbColor={value ? '#FFFFFF' : '#FFFFFF'}
+        ios_backgroundColor="#E5E5EA"
+        disabled={isUpdating}
       />
-    </View>
-  );
-
-  const SecuritySlider = ({ title, description, value, onValueChange, minimum, maximum, step, icon }) => (
-    <View style={styles.settingItem}>
-      <View style={styles.settingIcon}>
-        <Ionicons name={icon} size={24} color="#007AFF" />
-      </View>
-      <View style={styles.settingContent}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        <Text style={styles.settingDescription}>{description}</Text>
-        <View style={styles.sliderContainer}>
-          <Slider
-            style={styles.slider}
-            minimumValue={minimum}
-            maximumValue={maximum}
-            value={value}
-            onValueChange={onValueChange}
-            step={step}
-            minimumTrackTintColor="#007AFF"
-            maximumTrackTintColor="#E5E5EA"
-            thumbStyle={{ backgroundColor: '#007AFF' }}
-          />
-          <Text style={styles.sliderValue}>{step < 1 ? value.toFixed(1) : Math.round(value)}</Text>
-        </View>
-      </View>
     </View>
   );
 
@@ -207,6 +226,14 @@ const SecurityScreen = ({ navigation }) => {
               Failed Attempts: {deviceStatus.failedAttempts}
             </Text>
           </View>
+          {settings.dontTouchLockEnabled && (
+            <View style={styles.statusItem}>
+              <Ionicons name="eye" size={20} color="#FF3B30" />
+              <Text style={[styles.statusText, { color: '#FF3B30' }]}>
+                Don't Touch Active
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -230,6 +257,21 @@ const SecurityScreen = ({ navigation }) => {
             <Text style={styles.actionButtonText}>Test SOS</Text>
           </TouchableOpacity>
           
+          <TouchableOpacity 
+            style={[styles.actionButton, { backgroundColor: '#8E8E93' }]}
+            onPress={() => {
+              console.log('Current Security Settings:', settings);
+              Alert.alert(
+                'Security Status',
+                `Don't Touch: ${settings.dontTouchLockEnabled ? 'ON' : 'OFF'}\nMovement Lock: ${settings.movementLockEnabled ? 'ON' : 'OFF'}\nUSB Lock: ${settings.usbLockEnabled ? 'ON' : 'OFF'}\nApp Lock: ${settings.appLockEnabled ? 'ON' : 'OFF'}\nUpdating: ${isUpdating ? 'YES' : 'NO'}`,
+                [{ text: 'OK' }]
+              );
+            }}
+          >
+            <Ionicons name="information-circle" size={20} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Status</Text>
+          </TouchableOpacity>
+          
           {deviceStatus.isLocked && (
             <TouchableOpacity 
               style={[styles.actionButton, styles.unlockButton]}
@@ -250,15 +292,37 @@ const SecurityScreen = ({ navigation }) => {
           title="Movement Lock"
           description="Lock device when movement is detected"
           value={settings.movementLockEnabled}
-          onValueChange={(value) => handleSettingChange('movementLockEnabled', value)}
+          onValueChange={(value) => {
+            handleSettingChange('movementLockEnabled', value);
+            if (value) {
+              setTimeout(() => {
+                Alert.alert(
+                  'Movement Lock Enabled',
+                  'Your device will now lock and trigger an alarm if significant movement is detected. There is a 5-second grace period to prevent false triggers.',
+                  [{ text: 'OK' }]
+                );
+              }, 200);
+            }
+          }}
           icon="walk"
         />
 
         <SecurityToggle
           title="Don't Touch Lock"
-          description="Trigger alarm when device is touched/moved"
+          description="Trigger alarm and capture photo when device is touched/moved while charging or unattended"
           value={settings.dontTouchLockEnabled}
-          onValueChange={(value) => handleSettingChange('dontTouchLockEnabled', value)}
+          onValueChange={(value) => {
+            handleSettingChange('dontTouchLockEnabled', value);
+            if (value) {
+              setTimeout(() => {
+                Alert.alert(
+                  'Don\'t Touch Lock Enabled',
+                  'Your device will now trigger an alarm and capture photos if someone tries to move or touch it. Perfect for protecting your device while charging in public places. There is a 5-second grace period.',
+                  [{ text: 'OK' }]
+                );
+              }, 200);
+            }
+          }}
           icon="hand-left"
         />
 
@@ -276,28 +340,6 @@ const SecurityScreen = ({ navigation }) => {
           value={settings.appLockEnabled}
           onValueChange={(value) => handleSettingChange('appLockEnabled', value)}
           icon="apps"
-        />
-
-        <SecuritySlider
-          title="Movement Sensitivity"
-          description="Adjust movement detection sensitivity"
-          value={localMovementThreshold}
-          onValueChange={(value) => handleSliderChange('movementThreshold', value)}
-          minimum={0.1}
-          maximum={5.0}
-          step={0.1}
-          icon="speedometer"
-        />
-
-        <SecuritySlider
-          title="Max Failed Attempts"
-          description="Number of failed attempts before auto-lock"
-          value={localMaxFailedAttempts}
-          onValueChange={(value) => handleSliderChange('maxFailedAttempts', value)}
-          minimum={1}
-          maximum={10}
-          step={1}
-          icon="shield"
         />
       </View>
 
@@ -427,23 +469,6 @@ const styles = StyleSheet.create({
   settingDescription: {
     fontSize: 14,
     color: '#8E8E93',
-  },
-  sliderContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  slider: {
-    flex: 1,
-    height: 32,
-  },
-  sliderValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#007AFF',
-    marginLeft: 12,
-    minWidth: 40,
-    textAlign: 'right',
   },
   biometricInfo: {
     flexDirection: 'row',

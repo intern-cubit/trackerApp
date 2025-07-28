@@ -25,7 +25,7 @@ class SecurityService {
     this.accelerometerSubscription = null;
     this.gyroscopeSubscription = null;
     this.lastMovementTime = Date.now();
-    this.movementThreshold = 1.5; // Sensitivity threshold
+    this.movementThreshold = 3.5; // Higher sensitivity threshold for sudden/large movements only
     
     // USB protection
     this.usbLockEnabled = false;
@@ -84,7 +84,7 @@ class SecurityService {
         this.screenLockEnabled = parsed.screenLockEnabled || false;
         this.preventUninstall = parsed.preventUninstall !== undefined ? parsed.preventUninstall : true;
         this.lockedApps = parsed.lockedApps || [];
-        this.movementThreshold = parsed.movementThreshold || 1.5;
+        this.movementThreshold = parsed.movementThreshold || 3.5;
       }
     } catch (error) {
       console.error('Failed to load security settings:', error);
@@ -122,30 +122,37 @@ class SecurityService {
 
   setupMovementDetection() {
     // Set up accelerometer for movement detection
-    Accelerometer.setUpdateInterval(1000); // Check every second
+    Accelerometer.setUpdateInterval(500); // Check twice per second for better sudden movement detection
     
     this.accelerometerSubscription = Accelerometer.addListener(({ x, y, z }) => {
       if (this.movementLockEnabled || this.dontTouchLockEnabled) {
         const magnitude = Math.sqrt(x * x + y * y + z * z);
         
+        // Higher threshold specifically for sudden/large movements (theft attempts)
+        // Normal phone handling: ~1-2, Walking with phone: ~2-3, Sudden grab/theft: ~4-8+
         if (magnitude > this.movementThreshold) {
+          console.log(`� SUDDEN MOVEMENT DETECTED: magnitude ${magnitude.toFixed(2)} > threshold ${this.movementThreshold} - Potential theft!`);
           this.handleMovementDetected();
         }
       }
     });
 
-    // Set up gyroscope for rotation detection
-    Gyroscope.setUpdateInterval(1000);
+    // Set up gyroscope for rotation detection (only for movement lock, higher threshold)
+    Gyroscope.setUpdateInterval(500);
     
     this.gyroscopeSubscription = Gyroscope.addListener(({ x, y, z }) => {
       if (this.movementLockEnabled) {
         const rotationMagnitude = Math.sqrt(x * x + y * y + z * z);
         
-        if (rotationMagnitude > 0.5) { // Rotation threshold
+        // Higher rotation threshold for sudden grabs/snatches
+        if (rotationMagnitude > 1.2) { // Increased from 0.5 to 1.2
+          console.log(`🔄 SUDDEN ROTATION DETECTED: magnitude ${rotationMagnitude.toFixed(2)} - Potential theft!`);
           this.handleMovementDetected();
         }
       }
     });
+    
+    console.log('📱 Movement detection sensors initialized with high theft-detection thresholds');
   }
 
   setupPowerButtonDetection() {
@@ -249,6 +256,14 @@ class SecurityService {
           await this.enableUninstallPrevention(false);
           result = { preventUninstall: false };
           break;
+        case 'remote_lock':
+          await this.lockDeviceRemotely();
+          result = { locked: true };
+          break;
+        case 'remote_unlock':
+          const unlocked = await this.unlockDevice();
+          result = { unlocked };
+          break;
         case 'remote_alarm':
         case 'stop_alarm':
         case 'capture-photo':
@@ -332,8 +347,15 @@ class SecurityService {
         const settings = configData.securitySettings;
         
         this.maxFailedAttempts = settings.maxFailedAttempts || this.maxFailedAttempts;
-        this.movementThreshold = settings.movementSensitivity || this.movementThreshold;
         
+        // Don't override our theft detection threshold with server settings
+        // Keep our high threshold of 3.5 for theft detection
+        if (settings.movementSensitivity && settings.movementSensitivity >= 3.0) {
+          this.movementThreshold = settings.movementSensitivity;
+        }
+        // If server sends low sensitivity (like 0.2), ignore it to prevent false alarms
+        
+        console.log(`🔧 Config update - Movement threshold maintained at: ${this.movementThreshold}`);
         await this.saveSecuritySettings();
       }
       
@@ -492,6 +514,15 @@ class SecurityService {
       await this.triggerAlarm(60); // 1 minute alarm
 
       console.log('Auto-lock triggered due to failed attempts');
+      
+      // Emit lock state change event for UI updates
+      SocketService.emit('device-lock-state-changed', {
+        isLocked: true,
+        source: 'auto-lock',
+        reason: 'failed-attempts',
+        timestamp: Date.now()
+      });
+      
     } catch (error) {
       console.error('Failed to trigger auto-lock:', error);
     }
@@ -544,8 +575,12 @@ class SecurityService {
   async handleMovementDetected() {
     const now = Date.now();
     
-    // Prevent spam detection
-    if (now - this.lastMovementTime < 5000) return;
+    // Prevent spam detection and provide grace period after enabling features
+    if (now - this.lastMovementTime < 5000) {
+      // console.log('Movement detected but within grace period, ignoring...');
+      return;
+    }
+    
     this.lastMovementTime = now;
 
     if (this.movementLockEnabled) {
@@ -553,21 +588,41 @@ class SecurityService {
       this.isDeviceLocked = true;
       await this.triggerAlarm(30);
       
+      console.log('🔒 Movement Lock triggered - device locked due to movement');
+      
       SocketService.emit('movement-detected', {
         type: 'movement-lock',
         timestamp: now,
         location: LocationService.getLastKnownLocation(),
       });
+      
+      // Emit lock state change event for UI updates
+      SocketService.emit('device-lock-state-changed', {
+        isLocked: true,
+        source: 'movement-lock',
+        timestamp: now
+      });
     }
 
     if (this.dontTouchLockEnabled) {
-      // Trigger don't touch alarm
+      // Trigger don't touch alarm - someone is trying to touch/take the device
       await this.triggerAlarm(60);
+      
+      console.log('🚨 Don\'t Touch Lock triggered - unauthorized access detected');
+      
+      // Also capture photo of potential thief
+      try {
+        await MediaCaptureService.captureRemotePhoto();
+        console.log('📸 Photo captured due to Don\'t Touch violation');
+      } catch (error) {
+        console.error('Failed to capture photo during Don\'t Touch event:', error);
+      }
       
       SocketService.emit('movement-detected', {
         type: 'dont-touch',
         timestamp: now,
         location: LocationService.getLastKnownLocation(),
+        severity: 'high', // Higher severity for don't touch violations
       });
     }
   }
@@ -669,6 +724,7 @@ class SecurityService {
 
   async lockDeviceRemotely() {
     try {
+      console.log('🔒 Remote lock initiated - NO ALARM VERSION');
       this.isDeviceLocked = true;
       
       // Send confirmation
@@ -677,7 +733,15 @@ class SecurityService {
         source: 'remote',
       });
 
-      console.log('Device locked remotely');
+      console.log('Device locked remotely (silent mode)');
+      
+      // Emit lock state change event for UI updates
+      SocketService.emit('device-lock-state-changed', {
+        isLocked: true,
+        source: 'remote',
+        timestamp: Date.now()
+      });
+      
     } catch (error) {
       console.error('Failed to lock device remotely:', error);
     }
@@ -703,6 +767,14 @@ class SecurityService {
       await AsyncStorage.setItem('failedAttempts', '0');
 
       console.log('Device unlocked successfully');
+      
+      // Emit unlock state change event for UI updates
+      SocketService.emit('device-lock-state-changed', {
+        isLocked: false,
+        source: 'user',
+        timestamp: Date.now()
+      });
+      
       return true;
     } catch (error) {
       console.error('Failed to unlock device:', error);
@@ -730,11 +802,35 @@ class SecurityService {
   // Configuration methods
   async enableMovementLock(enabled) {
     this.movementLockEnabled = enabled;
+    
+    if (enabled) {
+      // Force reset threshold to ensure proper theft detection sensitivity
+      this.forceResetMovementThreshold();
+      
+      // Add grace period when enabling to prevent immediate triggering
+      this.lastMovementTime = Date.now();
+      console.log('🔒 Movement Lock enabled - 5 second grace period started');
+    } else {
+      console.log('🔓 Movement Lock disabled');
+    }
+    
     await this.saveSecuritySettings();
   }
 
   async enableDontTouchLock(enabled) {
     this.dontTouchLockEnabled = enabled;
+    
+    if (enabled) {
+      // Force reset threshold to ensure proper theft detection sensitivity
+      this.forceResetMovementThreshold();
+      
+      // Add grace period when enabling to prevent immediate triggering
+      this.lastMovementTime = Date.now();
+      console.log('🚨 Don\'t Touch Lock enabled - 5 second grace period started');
+    } else {
+      console.log('✋ Don\'t Touch Lock disabled');
+    }
+    
     await this.saveSecuritySettings();
   }
 
@@ -764,6 +860,12 @@ class SecurityService {
   async setMaxFailedAttempts(attempts) {
     this.maxFailedAttempts = attempts;
     await this.saveSecuritySettings();
+  }
+
+  // Force reset movement threshold to prevent false alarms
+  forceResetMovementThreshold() {
+    this.movementThreshold = 3.5;
+    console.log(`🔧 Movement threshold force reset to: ${this.movementThreshold}`);
   }
 
   // Getters

@@ -32,6 +32,7 @@
         "RECEIVE_BOOT_COMPLETED",
         "SYSTEM_ALERT_WINDOW",
         "DEVICE_ADMIN",
+        "BIND_DEVICE_ADMIN",
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "WRITE_EXTERNAL_STORAGE",
@@ -39,7 +40,18 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "FOREGROUND_SERVICE_CAMERA",
-        "FOREGROUND_SERVICE_MICROPHONE"
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "PACKAGE_USAGE_STATS",
+        "WRITE_SETTINGS",
+        "WRITE_SECURE_SETTINGS",
+        "CHANGE_CONFIGURATION",
+        "KILL_BACKGROUND_PROCESSES",
+        "GET_ACCOUNTS",
+        "MANAGE_ACCOUNTS",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "BODY_SENSORS",
+        "ACTIVITY_RECOGNITION"
       ],
       "package": "com.trackerapp.android"
     },

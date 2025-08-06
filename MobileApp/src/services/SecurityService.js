@@ -20,6 +20,7 @@ class SecurityService {
     this.alarmTimeout = null; // Store alarm timeout reference
     
     // Movement detection
+    this.movementAlarmEnabled = false;
     this.movementLockEnabled = false;
     this.dontTouchLockEnabled = false;
     this.accelerometerSubscription = null;
@@ -77,6 +78,7 @@ class SecurityService {
       if (settings) {
         const parsed = JSON.parse(settings);
         this.maxFailedAttempts = parsed.maxFailedAttempts || 3;
+        this.movementAlarmEnabled = parsed.movementAlarmEnabled || false;
         this.movementLockEnabled = parsed.movementLockEnabled || false;
         this.dontTouchLockEnabled = parsed.dontTouchLockEnabled || false;
         this.usbLockEnabled = parsed.usbLockEnabled || false;
@@ -95,6 +97,7 @@ class SecurityService {
     try {
       const settings = {
         maxFailedAttempts: this.maxFailedAttempts,
+        movementAlarmEnabled: this.movementAlarmEnabled,
         movementLockEnabled: this.movementLockEnabled,
         dontTouchLockEnabled: this.dontTouchLockEnabled,
         usbLockEnabled: this.usbLockEnabled,
@@ -121,19 +124,23 @@ class SecurityService {
   }
 
   setupMovementDetection() {
-    // Set up accelerometer for movement detection
-    Accelerometer.setUpdateInterval(500); // Check twice per second for better sudden movement detection
+    // Set up accelerometer for both movement and touch detection
+    Accelerometer.setUpdateInterval(200); // Check 5 times per second for better sensitivity
     
     this.accelerometerSubscription = Accelerometer.addListener(({ x, y, z }) => {
-      if (this.movementLockEnabled || this.dontTouchLockEnabled) {
-        const magnitude = Math.sqrt(x * x + y * y + z * z);
-        
-        // Higher threshold specifically for sudden/large movements (theft attempts)
-        // Normal phone handling: ~1-2, Walking with phone: ~2-3, Sudden grab/theft: ~4-8+
-        if (magnitude > this.movementThreshold) {
-          console.log(`� SUDDEN MOVEMENT DETECTED: magnitude ${magnitude.toFixed(2)} > threshold ${this.movementThreshold} - Potential theft!`);
-          this.handleMovementDetected();
-        }
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      
+      // Touch detection (very sensitive, light touches) - for Don't Touch Lock only
+      if (this.dontTouchLockEnabled && magnitude > 1.2 && magnitude < 2.5) {
+        console.log(`✋ TOUCH DETECTED: magnitude ${magnitude.toFixed(2)} - Light touch/tap detected!`);
+        this.handleTouchDetected();
+        return; // Don't process as movement if it's a light touch
+      }
+      
+      // Movement detection (higher threshold for actual movement) - for Movement Alarm and Movement Lock
+      if ((this.movementAlarmEnabled || this.movementLockEnabled) && magnitude > this.movementThreshold) {
+        console.log(`📱 MOVEMENT DETECTED: magnitude ${magnitude.toFixed(2)} > threshold ${this.movementThreshold} - Device movement!`);
+        this.handleMovementDetected();
       }
     });
 
@@ -155,6 +162,26 @@ class SecurityService {
     console.log('📱 Movement detection sensors initialized with high theft-detection thresholds');
   }
 
+  restartSensorMonitoring() {
+    // Stop existing subscriptions if they exist
+    if (this.accelerometerSubscription) {
+      this.accelerometerSubscription.remove();
+      this.accelerometerSubscription = null;
+    }
+    if (this.gyroscopeSubscription) {
+      this.gyroscopeSubscription.remove();
+      this.gyroscopeSubscription = null;
+    }
+
+    // Restart if any security feature is enabled
+    if (this.movementAlarmEnabled || this.movementLockEnabled || this.dontTouchLockEnabled) {
+      console.log('🔄 Restarting sensor monitoring for active security features');
+      this.setupMovementDetection();
+    } else {
+      console.log('⏹️ All security features disabled - sensors stopped');
+    }
+  }
+
   setupPowerButtonDetection() {
     // This would require native module implementation
     // For now, we'll simulate with a method that can be called
@@ -163,7 +190,7 @@ class SecurityService {
 
   setupRemoteCommandListeners() {
     SocketService.on('remote-lock', () => {
-      this.lockDeviceRemotely();
+      this.lockDeviceRemotely('remote');
     });
 
     SocketService.on('remote-alarm', (data) => {
@@ -257,7 +284,7 @@ class SecurityService {
           result = { preventUninstall: false };
           break;
         case 'remote_lock':
-          await this.lockDeviceRemotely();
+          await this.lockDeviceRemotely('remote');
           result = { locked: true };
           break;
         case 'remote_unlock':
@@ -307,7 +334,7 @@ class SecurityService {
     try {
       switch (action) {
         case 'emergency_lock':
-          await this.lockDeviceRemotely();
+          await this.lockDeviceRemotely('emergency');
           await this.triggerAlarm(60);
           break;
         case 'emergency_alarm':
@@ -583,48 +610,98 @@ class SecurityService {
     
     this.lastMovementTime = now;
 
-    if (this.movementLockEnabled) {
-      // Lock device due to movement
-      this.isDeviceLocked = true;
-      await this.triggerAlarm(30);
+    // 1. Movement Alarm - ONLY play alarm sound when movement is detected
+    if (this.movementAlarmEnabled) {
+      await this.triggerAlarm(15); // Shorter alarm for movement detection
       
-      console.log('🔒 Movement Lock triggered - device locked due to movement');
+      console.log('🚨 Movement Alarm triggered - alarm sound only');
+      
+      SocketService.emit('movement-detected', {
+        type: 'movement-alarm',
+        timestamp: now,
+        location: LocationService.getLastKnownLocation(),
+        action: 'alarm-only'
+      });
+    }
+
+    // 2. Movement Lock - ONLY lock device, NO alarm
+    if (this.movementLockEnabled) {
+      // Lock device due to movement - NO ALARM
+      this.isDeviceLocked = true;
+      
+      console.log('🔒 Movement Lock triggered - device locked (no alarm)');
+      
+      // Actually execute the locking mechanism
+      await this.lockDeviceRemotely('movement-lock');
       
       SocketService.emit('movement-detected', {
         type: 'movement-lock',
         timestamp: now,
         location: LocationService.getLastKnownLocation(),
-      });
-      
-      // Emit lock state change event for UI updates
-      SocketService.emit('device-lock-state-changed', {
-        isLocked: true,
-        source: 'movement-lock',
-        timestamp: now
+        action: 'device-locked-silent'
       });
     }
 
-    if (this.dontTouchLockEnabled) {
-      // Trigger don't touch alarm - someone is trying to touch/take the device
-      await this.triggerAlarm(60);
-      
-      console.log('🚨 Don\'t Touch Lock triggered - unauthorized access detected');
-      
-      // Also capture photo of potential thief
-      try {
-        await MediaCaptureService.captureRemotePhoto();
-        console.log('📸 Photo captured due to Don\'t Touch violation');
-      } catch (error) {
-        console.error('Failed to capture photo during Don\'t Touch event:', error);
-      }
-      
-      SocketService.emit('movement-detected', {
-        type: 'dont-touch',
-        timestamp: now,
-        location: LocationService.getLastKnownLocation(),
-        severity: 'high', // Higher severity for don't touch violations
-      });
+    // Note: Don't Touch Lock should NOT be handled here - it's handled by touch events
+  }
+
+  async handleTouchDetected() {
+    const now = Date.now();
+    
+    // Only handle if Don't Touch Lock is enabled
+    if (!this.dontTouchLockEnabled) {
+      return;
     }
+    
+    // Prevent spam detection and provide grace period after enabling features
+    if (now - this.lastMovementTime < 5000) {
+      console.log('Touch detected but within grace period, ignoring...');
+      return;
+    }
+
+    // Lock the device immediately
+    this.isDeviceLocked = true;
+    
+    console.log('✋ Don\'t Touch Lock triggered - device locked due to screen touch');
+    
+    // Actually execute the locking mechanism
+    await this.lockDeviceRemotely('dont-touch-lock');
+    
+    // Auto-disable the don't touch lock after being triggered
+    this.dontTouchLockEnabled = false;
+    await this.saveSecuritySettings();
+    
+    console.log('✋ Don\'t Touch Lock automatically disabled after activation');
+    
+    // Also capture photo of potential intruder
+    try {
+      await MediaCaptureService.captureRemotePhoto();
+      console.log('📸 Photo captured due to Don\'t Touch violation');
+    } catch (error) {
+      console.error('Failed to capture photo during Don\'t Touch event:', error);
+    }
+    
+    SocketService.emit('touch-detected', {
+      type: 'dont-touch',
+      timestamp: now,
+      location: LocationService.getLastKnownLocation(),
+      severity: 'high',
+      action: 'device-locked-auto-disabled'
+    });
+    
+    // Emit lock state change event for UI updates
+    SocketService.emit('device-lock-state-changed', {
+      isLocked: true,
+      source: 'dont-touch-lock',
+      timestamp: now
+    });
+    
+    // Notify UI that don't touch lock was auto-disabled
+    SocketService.emit('security-setting-changed', {
+      setting: 'dontTouchLockEnabled',
+      value: false,
+      reason: 'auto-disabled-after-trigger'
+    });
   }
 
   async triggerAlarm(duration = 30) {
@@ -722,28 +799,31 @@ class SecurityService {
     }
   }
 
-  async lockDeviceRemotely() {
+  async lockDeviceRemotely(source = 'remote') {
     try {
-      console.log('🔒 Remote lock initiated - NO ALARM VERSION');
+      console.log(`🔒 Device lock initiated - source: ${source}`);
       this.isDeviceLocked = true;
       
       // Send confirmation
       SocketService.emit('device-locked', {
         timestamp: Date.now(),
-        source: 'remote',
+        source: source,
       });
 
-      console.log('Device locked remotely (silent mode)');
+      console.log(`Device locked (${source}) - silent mode`);
       
       // Emit lock state change event for UI updates
       SocketService.emit('device-lock-state-changed', {
         isLocked: true,
-        source: 'remote',
+        source: source,
         timestamp: Date.now()
       });
       
+      // Force immediate UI state check by emitting a direct navigation event
+      console.log('🔄 Forcing navigation state update...');
+      
     } catch (error) {
-      console.error('Failed to lock device remotely:', error);
+      console.error('Failed to lock device:', error);
     }
   }
 
@@ -800,6 +880,26 @@ class SecurityService {
   }
 
   // Configuration methods
+  async enableMovementAlarm(enabled) {
+    this.movementAlarmEnabled = enabled;
+    
+    if (enabled) {
+      // Force reset threshold to ensure proper movement detection sensitivity
+      this.forceResetMovementThreshold();
+      
+      // Add grace period when enabling to prevent immediate triggering
+      this.lastMovementTime = Date.now();
+      console.log('🚨 Movement Alarm enabled - 5 second grace period started');
+    } else {
+      console.log('🔇 Movement Alarm disabled');
+    }
+    
+    // Restart sensor monitoring based on current settings
+    this.restartSensorMonitoring();
+    
+    await this.saveSecuritySettings();
+  }
+
   async enableMovementLock(enabled) {
     this.movementLockEnabled = enabled;
     
@@ -814,6 +914,9 @@ class SecurityService {
       console.log('🔓 Movement Lock disabled');
     }
     
+    // Restart sensor monitoring based on current settings
+    this.restartSensorMonitoring();
+    
     await this.saveSecuritySettings();
   }
 
@@ -826,10 +929,13 @@ class SecurityService {
       
       // Add grace period when enabling to prevent immediate triggering
       this.lastMovementTime = Date.now();
-      console.log('🚨 Don\'t Touch Lock enabled - 5 second grace period started');
+      console.log('✋ Don\'t Touch Lock enabled - 5 second grace period started');
     } else {
       console.log('✋ Don\'t Touch Lock disabled');
     }
+    
+    // Restart sensor monitoring based on current settings
+    this.restartSensorMonitoring();
     
     await this.saveSecuritySettings();
   }
@@ -880,6 +986,7 @@ class SecurityService {
   getSecuritySettings() {
     return {
       maxFailedAttempts: this.maxFailedAttempts,
+      movementAlarmEnabled: this.movementAlarmEnabled,
       movementLockEnabled: this.movementLockEnabled,
       dontTouchLockEnabled: this.dontTouchLockEnabled,
       usbLockEnabled: this.usbLockEnabled,

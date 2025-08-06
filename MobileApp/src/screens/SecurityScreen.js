@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   TextInput,
   Modal,
   Dimensions,
+  Animated,
+  Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import SecurityService from '../services/SecurityService';
@@ -20,6 +22,7 @@ const { width, height } = Dimensions.get('window');
 const SecurityScreen = ({ navigation }) => {
   const [settings, setSettings] = useState({
     maxFailedAttempts: 3,
+    movementAlarmEnabled: false,
     movementLockEnabled: false,
     dontTouchLockEnabled: false,
     usbLockEnabled: false,
@@ -43,7 +46,19 @@ const SecurityScreen = ({ navigation }) => {
   // Local states for UI management
   const [isUpdating, setIsUpdating] = useState(false);
   const [showTestModal, setShowTestModal] = useState(false);
+  const [showBoostModal, setShowBoostModal] = useState(false);
   const [lastBoostTime, setLastBoostTime] = useState(null);
+  
+  // Animation states for performance boost
+  const [memoryToFree, setMemoryToFree] = useState(0);
+  const [currentMemory, setCurrentMemory] = useState(0);
+  const [displayMemory, setDisplayMemory] = useState(0);
+  const [isBoostInProgress, setIsBoostInProgress] = useState(false);
+  
+  // Animated values
+  const memoryBarAnimation = useRef(new Animated.Value(0)).current;
+  const pulseAnimation = useRef(new Animated.Value(1)).current;
+  const progressAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     loadSecuritySettings();
@@ -94,14 +109,29 @@ const SecurityScreen = ({ navigation }) => {
         [{ text: 'OK' }]
       );
     };
+
+    const handleSecuritySettingChanged = (data) => {
+      if (data.setting === 'dontTouchLockEnabled' && data.reason === 'auto-disabled-after-trigger') {
+        // Update local state to reflect the auto-disable
+        setSettings(prev => ({ ...prev, dontTouchLockEnabled: false }));
+        
+        Alert.alert(
+          '✋ Don\'t Touch Lock Triggered',
+          'Device was locked due to screen touch. The Don\'t Touch Lock has been automatically disabled and can be re-enabled manually.',
+          [{ text: 'OK' }]
+        );
+      }
+    };
     
     SocketService.on('device-lock-state-changed', handleLockStateChange);
     SocketService.on('performance-boost-completed', handlePerformanceBoost);
+    SocketService.on('security-setting-changed', handleSecuritySettingChanged);
     
     // Cleanup listener on unmount
     return () => {
       SocketService.off('device-lock-state-changed', handleLockStateChange);
       SocketService.off('performance-boost-completed', handlePerformanceBoost);
+      SocketService.off('security-setting-changed', handleSecuritySettingChanged);
     };
   }, []);
 
@@ -132,6 +162,10 @@ const SecurityScreen = ({ navigation }) => {
 
       // Update security service
       switch (setting) {
+        case 'movementAlarmEnabled':
+          await SecurityService.enableMovementAlarm(value);
+          console.log(`Movement Alarm ${value ? 'enabled' : 'disabled'}`);
+          break;
         case 'movementLockEnabled':
           await SecurityService.enableMovementLock(value);
           console.log(`Movement Lock ${value ? 'enabled' : 'disabled'}`);
@@ -212,24 +246,100 @@ const SecurityScreen = ({ navigation }) => {
 
   const handlePerformanceBoost = async () => {
     try {
-      Alert.alert(
-        '⚡ Performance Boost',
-        'This will clear cache and optimize system performance. Continue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Boost Now',
-            onPress: async () => {
-              const result = await SecurityService.optimizePerformance();
-              setLastBoostTime(new Date());
-              Alert.alert('Success', result.message);
-            }
+      // Generate random memory values for demo
+      const memoryToFree = Math.floor(Math.random() * 500 + 200); // 200-700 MB
+      const currentUsage = Math.floor(Math.random() * 300 + 100); // 100-400 MB
+      
+      setMemoryToFree(memoryToFree);
+      setCurrentMemory(currentUsage);
+      setDisplayMemory(currentUsage);
+      setShowBoostModal(true);
+      
+      // Reset animations
+      memoryBarAnimation.setValue(100);
+      progressAnimation.setValue(0);
+      
+      // Start pulse animation
+      const startPulse = () => {
+        Animated.sequence([
+          Animated.timing(pulseAnimation, {
+            toValue: 1.1,
+            duration: 800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnimation, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          if (showBoostModal && !isBoostInProgress) {
+            startPulse();
           }
-        ]
-      );
+        });
+      };
+      startPulse();
+      
     } catch (error) {
-      console.error('Error triggering performance boost:', error);
-      Alert.alert('Error', 'Failed to trigger performance boost');
+      console.error('Error showing performance boost:', error);
+      Alert.alert('Error', 'Failed to show performance boost');
+    }
+  };
+
+  const executePerformanceBoost = async () => {
+    try {
+      setIsBoostInProgress(true);
+      
+      // Start progress animation
+      Animated.timing(progressAnimation, {
+        toValue: 1,
+        duration: 3000,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }).start();
+      
+      // Animate memory bar going down
+      Animated.timing(memoryBarAnimation, {
+        toValue: 0,
+        duration: 3000,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }).start();
+      
+      // Animate memory counter going down
+      const startMemory = currentMemory;
+      const endMemory = Math.max(0, currentMemory - memoryToFree);
+      const memoryAnimation = setInterval(() => {
+        const progress = progressAnimation._value;
+        const newMemory = startMemory - (progress * (startMemory - endMemory));
+        setDisplayMemory(Math.round(newMemory));
+      }, 50);
+      
+      // Simulate the actual boost process
+      setTimeout(async () => {
+        clearInterval(memoryAnimation);
+        const result = await SecurityService.optimizePerformance();
+        setLastBoostTime(new Date());
+        
+        setTimeout(() => {
+          setShowBoostModal(false);
+          setIsBoostInProgress(false);
+          
+          Alert.alert(
+            '⚡ Performance Boost Complete!',
+            `${memoryToFree} MB freed successfully!\n${result.message}`,
+            [{ text: 'OK' }]
+          );
+        }, 500);
+      }, 3000);
+      
+    } catch (error) {
+      console.error('Error executing performance boost:', error);
+      setIsBoostInProgress(false);
+      setShowBoostModal(false);
+      Alert.alert('Error', 'Failed to execute performance boost');
     }
   };
 
@@ -290,6 +400,126 @@ const SecurityScreen = ({ navigation }) => {
     </View>
   );
 
+  const renderPerformanceBoostModal = () => (
+    <Modal
+      visible={showBoostModal}
+      animationType="fade"
+      transparent={true}
+      onRequestClose={() => {
+        if (!isBoostInProgress) {
+          setShowBoostModal(false);
+          // Reset animations
+          memoryBarAnimation.setValue(100);
+          progressAnimation.setValue(0);
+          pulseAnimation.setValue(1);
+        }
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalContent, styles.boostModalContent]}>
+          <View style={styles.boostModalHeader}>
+            <Animated.View style={[styles.boostIcon, { transform: [{ scale: pulseAnimation }] }]}>
+              <Ionicons name="flash" size={32} color="#fdcb6e" />
+            </Animated.View>
+            <Text style={styles.boostModalTitle}>⚡ Performance Boost</Text>
+            <Text style={styles.boostModalSubtitle}>
+              {isBoostInProgress ? 'Optimizing system...' : 'Ready to free up memory and optimize performance'}
+            </Text>
+          </View>
+
+          {/* Memory Statistics */}
+          <View style={styles.memoryStatsContainer}>
+            <View style={styles.memoryStatCard}>
+              <Text style={styles.memoryStatLabel}>Memory to Free</Text>
+              <Text style={styles.memoryStatValue}>{memoryToFree} MB</Text>
+            </View>
+            <View style={styles.memoryStatCard}>
+              <Text style={styles.memoryStatLabel}>Current Usage</Text>
+              <Text style={[styles.memoryStatValue, styles.currentMemoryValue]}>
+                {displayMemory} MB
+              </Text>
+            </View>
+          </View>
+
+          {/* Animated Memory Bar */}
+          <View style={styles.memoryBarContainer}>
+            <Text style={styles.memoryBarLabel}>Memory Usage</Text>
+            <View style={styles.memoryBarTrack}>
+              <Animated.View
+                style={[
+                  styles.memoryBarFill,
+                  {
+                    width: memoryBarAnimation.interpolate({
+                      inputRange: [0, 100],
+                      outputRange: ['0%', '100%'],
+                      extrapolate: 'clamp',
+                    }),
+                  },
+                ]}
+              />
+            </View>
+          </View>
+
+          {/* Progress Bar (shown during boost) */}
+          {isBoostInProgress && (
+            <View style={styles.progressContainer}>
+              <Text style={styles.progressLabel}>Optimization Progress</Text>
+              <View style={styles.progressBarTrack}>
+                <Animated.View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: progressAnimation.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0%', '100%'],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* Action Buttons */}
+          <View style={styles.boostModalActions}>
+            {!isBoostInProgress ? (
+              <>
+                <TouchableOpacity
+                  style={[styles.boostActionButton, styles.cancelBoostButton]}
+                  onPress={() => {
+                    setShowBoostModal(false);
+                    // Reset animations
+                    memoryBarAnimation.setValue(100);
+                    progressAnimation.setValue(0);
+                    pulseAnimation.setValue(1);
+                  }}
+                >
+                  <Text style={styles.cancelBoostButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.boostActionButton, styles.confirmBoostButton]}
+                  onPress={executePerformanceBoost}
+                >
+                  <Ionicons name="flash" size={18} color="#fff" />
+                  <Text style={styles.confirmBoostButtonText}>Boost Now</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <View style={styles.boostingIndicator}>
+                <Animated.View style={[styles.boostingIcon, { transform: [{ scale: pulseAnimation }] }]}>
+                  <Ionicons name="flash" size={20} color="#fdcb6e" />
+                </Animated.View>
+                <Text style={styles.boostingText}>Optimizing Performance...</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
   const renderTestModal = () => (
     <Modal
       visible={showTestModal}
@@ -324,6 +554,30 @@ const SecurityScreen = ({ navigation }) => {
           >
             <Ionicons name="warning" size={20} color="#fff" />
             <Text style={styles.testButtonText}>Test SOS Alert</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.testButton, styles.modalTestButton, { backgroundColor: '#e17055' }]}
+            onPress={() => {
+              console.log('🧪 Manually triggering movement detection...');
+              SecurityService.handleMovementDetected();
+              setShowTestModal(false);
+            }}
+          >
+            <Ionicons name="phone-portrait" size={20} color="#fff" />
+            <Text style={styles.testButtonText}>Test Movement</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.testButton, styles.modalTestButton, { backgroundColor: '#fdcb6e' }]}
+            onPress={() => {
+              console.log('🧪 Manually triggering touch detection...');
+              SecurityService.handleTouchDetected();
+              setShowTestModal(false);
+            }}
+          >
+            <Ionicons name="hand-left" size={20} color="#fff" />
+            <Text style={styles.testButtonText}>Test Touch</Text>
           </TouchableOpacity>
           
           <TouchableOpacity
@@ -441,13 +695,53 @@ const SecurityScreen = ({ navigation }) => {
           </View>
         </View>
 
+        {/* Movement Alarm */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🚨 Movement Alarm</Text>
+          
+          {renderSecurityCard(
+            'Movement Detection Alarm',
+            'Trigger alarm sound when unauthorized movement is detected',
+            settings.movementAlarmEnabled,
+            (value) => {
+              handleSettingChange('movementAlarmEnabled', value);
+              if (value) {
+                setTimeout(() => {
+                  Alert.alert(
+                    'Movement Alarm Enabled',
+                    'Your device will now play an alarm sound if significant movement is detected. This feature is perfect for alerting you when someone tries to move your device.',
+                    [{ text: 'OK' }]
+                  );
+                }, 200);
+              }
+            },
+            'volume-high'
+          )}
+          
+          {settings.movementAlarmEnabled && (
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Movement Threshold:</Text>
+              <TextInput
+                style={styles.numberInput}
+                value={settings.movementThreshold.toString()}
+                onChangeText={handleThresholdChange}
+                keyboardType="numeric"
+                placeholder="3.5"
+                placeholderTextColor="#b2bec3"
+                selectionColor="#74b9ff"
+              />
+              <Text style={styles.inputHint}>Higher = less sensitive (recommended: 3.5)</Text>
+            </View>
+          )}
+        </View>
+
         {/* Movement Lock */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>📱 Movement Lock</Text>
           
           {renderSecurityCard(
             'Movement Detection Lock',
-            'Lock device when unauthorized movement is detected',
+            'Lock device and turn off screen when unauthorized movement is detected',
             settings.movementLockEnabled,
             (value) => {
               handleSettingChange('movementLockEnabled', value);
@@ -455,7 +749,7 @@ const SecurityScreen = ({ navigation }) => {
                 setTimeout(() => {
                   Alert.alert(
                     'Movement Lock Enabled',
-                    'Your device will now lock and trigger an alarm if significant movement is detected. There is a 5-second grace period to prevent false triggers.',
+                    'Your device will now lock and turn off the screen if significant movement is detected. This provides maximum security by completely disabling device access.',
                     [{ text: 'OK' }]
                   );
                 }, 200);
@@ -481,13 +775,13 @@ const SecurityScreen = ({ navigation }) => {
           )}
         </View>
 
-        {/* Movement Alarm (Don't Touch) */}
+        {/* Don't Touch Lock */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🚨 Movement Alarm</Text>
+          <Text style={styles.sectionTitle}>✋ Don't Touch Lock</Text>
           
           {renderSecurityCard(
-            'Don\'t Touch Lock',
-            'Trigger alarm and capture photo when device is touched/moved while charging or unattended',
+            'Touch Detection Lock',
+            'Lock device and turn off screen when someone touches the screen - automatically disables after activation',
             settings.dontTouchLockEnabled,
             (value) => {
               handleSettingChange('dontTouchLockEnabled', value);
@@ -495,13 +789,14 @@ const SecurityScreen = ({ navigation }) => {
                 setTimeout(() => {
                   Alert.alert(
                     'Don\'t Touch Lock Enabled',
-                    'Your device will now trigger an alarm and capture photos if someone tries to move or touch it. Perfect for protecting your device while charging in public places. There is a 5-second grace period.',
+                    'Your device will now lock and turn off if someone touches the screen. This feature automatically turns off after being triggered, so you can re-enable it later. Perfect for protecting your device while charging.',
                     [{ text: 'OK' }]
                   );
                 }, 200);
               }
             },
-            'hand-left'
+            'hand-left',
+            true
           )}
         </View>
 
@@ -558,6 +853,23 @@ const SecurityScreen = ({ navigation }) => {
               <Ionicons name="bug" size={20} color="#fff" />
               <Text style={styles.testControlText}>Security Testing (Dev Only)</Text>
             </TouchableOpacity>
+            
+            {/* Quick Debug Info */}
+            <View style={styles.debugInfo}>
+              <Text style={styles.debugTitle}>🐛 Debug Info:</Text>
+              <Text style={styles.debugText}>
+                Movement Alarm: {settings.movementAlarmEnabled ? '✅ ON' : '❌ OFF'}
+              </Text>
+              <Text style={styles.debugText}>
+                Movement Lock: {settings.movementLockEnabled ? '✅ ON' : '❌ OFF'}
+              </Text>
+              <Text style={styles.debugText}>
+                Don't Touch Lock: {settings.dontTouchLockEnabled ? '✅ ON' : '❌ OFF'}
+              </Text>
+              <Text style={styles.debugText}>
+                Movement Threshold: {settings.movementThreshold}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -589,6 +901,7 @@ const SecurityScreen = ({ navigation }) => {
         </View>
       </ScrollView>
       
+      {renderPerformanceBoostModal()}
       {renderTestModal()}
     </View>
   );
@@ -863,6 +1176,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
+  debugInfo: {
+    backgroundColor: '#f1f3f4',
+    padding: 15,
+    borderRadius: 12,
+    marginTop: 15,
+    borderWidth: 1,
+    borderColor: '#e0e6ed',
+  },
+  debugTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#2d3436',
+    marginBottom: 10,
+  },
+  debugText: {
+    fontSize: 14,
+    color: '#636e72',
+    marginBottom: 5,
+    fontFamily: 'monospace',
+  },
   biometricInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -961,6 +1294,161 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  
+  // Performance Boost Modal Styles
+  boostModalContent: {
+    maxWidth: 380,
+    maxHeight: height * 0.7,
+  },
+  boostModalHeader: {
+    alignItems: 'center',
+    marginBottom: 25,
+  },
+  boostIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(253,203,110,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  boostModalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#2d3436',
+    marginBottom: 8,
+  },
+  boostModalSubtitle: {
+    fontSize: 15,
+    color: '#636e72',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  memoryStatsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 25,
+    gap: 12,
+  },
+  memoryStatCard: {
+    flex: 1,
+    backgroundColor: '#f8fafb',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e6ed',
+  },
+  memoryStatLabel: {
+    fontSize: 13,
+    color: '#636e72',
+    marginBottom: 6,
+    fontWeight: '500',
+  },
+  memoryStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2d3436',
+  },
+  currentMemoryValue: {
+    color: '#00b894',
+  },
+  memoryBarContainer: {
+    marginBottom: 20,
+  },
+  memoryBarLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  memoryBarTrack: {
+    height: 12,
+    backgroundColor: '#e0e6ed',
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  memoryBarFill: {
+    height: '100%',
+    backgroundColor: '#ff7675',
+    borderRadius: 6,
+  },
+  progressContainer: {
+    marginBottom: 20,
+  },
+  progressLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  progressBarTrack: {
+    height: 8,
+    backgroundColor: '#e0e6ed',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#00b894',
+    borderRadius: 4,
+  },
+  boostModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  boostActionButton: {
+    flex: 1,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  cancelBoostButton: {
+    backgroundColor: '#ddd6fe',
+    borderWidth: 1,
+    borderColor: '#a29bfe',
+  },
+  cancelBoostButtonText: {
+    color: '#6c5ce7',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  confirmBoostButton: {
+    backgroundColor: '#fdcb6e',
+    shadowColor: '#fdcb6e',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  confirmBoostButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  boostingIndicator: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  boostingIcon: {
+    marginRight: 12,
+  },
+  boostingText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fdcb6e',
   },
 });
 

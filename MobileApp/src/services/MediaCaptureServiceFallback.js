@@ -92,45 +92,74 @@ class MediaCaptureServiceFallback {
 
       console.log('🎥 Starting video recording without audio (fallback method)...');
 
+      let recordingPromise = null;
+      let audioMuted = false;
+
       // Try recording with mute parameter first
       try {
-        const recordingPromise = this.cameraRef.recordAsync({
+        recordingPromise = this.cameraRef.recordAsync({
           quality: '480p',
           maxDuration: options.maxDuration || 30,
           mute: true, // Try with mute first
         });
 
-        this.isRecording = true;
-        this.currentRecordingPromise = recordingPromise;
-        this.recordingStartTime = Date.now();
-        
-        console.log('✅ Video recording started (fallback method with mute).');
-        return { status: 'recording_started', audioMuted: true };
+        // Test if the promise is valid by checking if it's a thenable
+        if (recordingPromise && typeof recordingPromise.then === 'function') {
+          this.isRecording = true;
+          this.currentRecordingPromise = recordingPromise;
+          this.recordingStartTime = Date.now();
+          audioMuted = true;
+          
+          console.log('✅ Video recording started (fallback method with mute).');
+          return { status: 'recording_started', audioMuted: true };
+        } else {
+          throw new Error('Recording promise is invalid');
+        }
       } catch (muteError) {
         console.warn('⚠️ Recording with mute failed, trying without audio params:', muteError.message);
         
-        // If mute fails, try without any audio parameters
-        const recordingPromise = this.cameraRef.recordAsync({
-          quality: '480p',
-          maxDuration: options.maxDuration || 30,
-          // No audio parameters at all
-        });
-
-        this.isRecording = true;
-        this.currentRecordingPromise = recordingPromise;
-        this.recordingStartTime = Date.now();
+        // Reset state if first attempt failed
+        this.isRecording = false;
+        this.currentRecordingPromise = null;
         
-        console.log('✅ Video recording started (fallback method without audio params).');
-        return { status: 'recording_started', audioMuted: false }; // May have audio
+        // If mute fails, throw the error since it's likely a permission issue
+        if (muteError.message.includes('RECORD_AUDIO')) {
+          throw new Error('Video recording requires microphone permission. Please ensure microphone permission is granted and try again.');
+        }
+        
+        // Try without any audio parameters as fallback
+        try {
+          recordingPromise = this.cameraRef.recordAsync({
+            quality: '480p',
+            maxDuration: options.maxDuration || 30,
+            // No audio parameters at all
+          });
+
+          if (recordingPromise && typeof recordingPromise.then === 'function') {
+            this.isRecording = true;
+            this.currentRecordingPromise = recordingPromise;
+            this.recordingStartTime = Date.now();
+            audioMuted = false;
+            
+            console.log('✅ Video recording started (fallback method without audio params).');
+            return { status: 'recording_started', audioMuted: false }; // May have audio
+          } else {
+            throw new Error('Recording promise is invalid');
+          }
+        } catch (secondError) {
+          console.error('Both recording attempts failed:', secondError.message);
+          throw secondError;
+        }
       }
     } catch (error) {
       console.error('Failed to start video recording (fallback):', error);
       this.isRecording = false;
       this.currentRecordingPromise = null;
+      this.recordingStartTime = null;
       
       // Provide helpful error message
       if (error.message.includes('RECORD_AUDIO')) {
-        throw new Error('Video recording requires audio permission. Please grant microphone permission in device settings.');
+        throw new Error('Video recording requires microphone permission. Please ensure microphone permission is granted in device settings and restart the app.');
       }
       
       throw error;
@@ -145,45 +174,66 @@ class MediaCaptureServiceFallback {
       
       if (!this.isRecording || !this.currentRecordingPromise) {
         console.warn('⚠️ No active video recording to stop');
+        // Clean up state
         this.isRecording = false;
         this.currentRecordingPromise = null;
+        this.recordingStartTime = null;
         throw new Error('No active video recording to stop.');
       }
 
       console.log('🛑 Stopping video recording (fallback method)...');
 
-      // Stop recording
-      this.cameraRef.stopRecording();
-      this.isRecording = false;
-
-      // Wait for recording to complete
-      const video = await this.currentRecordingPromise;
-      this.currentRecordingPromise = null;
-      this.recordingStartTime = null;
-      
-      if (!video || !video.uri) {
-        throw new Error('Video recording failed - no video data returned.');
-      }
-
-      console.log('✅ Video recording completed:', video.uri);
-
-      // Save to device
-      if (this.hasPermissions) {
-        const asset = await MediaLibrary.createAssetAsync(video.uri);
-        console.log('📱 Video saved to gallery');
-      }
-
-      // Try to upload to server
       try {
-        await this.uploadMedia(video.uri, 'video', true);
-        console.log('☁️ Video uploaded to server');
-      } catch (uploadError) {
-        console.warn('⚠️ Video upload failed:', uploadError.message);
-      }
+        // Stop recording
+        this.cameraRef.stopRecording();
+        this.isRecording = false;
 
-      return video;
+        // Wait for recording to complete
+        const video = await this.currentRecordingPromise;
+        this.currentRecordingPromise = null;
+        this.recordingStartTime = null;
+        
+        if (!video || !video.uri) {
+          throw new Error('Video recording failed - no video data returned.');
+        }
+
+        console.log('✅ Video recording completed:', video.uri);
+
+        // Save to device
+        if (this.hasPermissions) {
+          try {
+            const asset = await MediaLibrary.createAssetAsync(video.uri);
+            console.log('📱 Video saved to gallery');
+          } catch (saveError) {
+            console.warn('⚠️ Failed to save video to gallery:', saveError.message);
+          }
+        }
+
+        // Try to upload to server
+        try {
+          await this.uploadMedia(video.uri, 'video', true);
+          console.log('☁️ Video uploaded to server');
+        } catch (uploadError) {
+          console.warn('⚠️ Video upload failed:', uploadError.message);
+        }
+
+        return video;
+      } catch (stopError) {
+        // Clean up state on any error
+        this.isRecording = false;
+        this.currentRecordingPromise = null;  
+        this.recordingStartTime = null;
+        
+        // If it's a permission error, provide better message
+        if (stopError.message && stopError.message.includes('RECORD_AUDIO')) {
+          throw new Error('Video recording failed due to missing microphone permission. Please grant microphone permission in device settings and restart the app.');
+        }
+        
+        throw stopError;
+      }
     } catch (error) {
       console.error('Failed to stop video recording (fallback):', error);
+      // Ensure state is clean
       this.isRecording = false;
       this.currentRecordingPromise = null;
       this.recordingStartTime = null;

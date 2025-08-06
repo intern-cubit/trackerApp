@@ -9,6 +9,8 @@ import {
   Platform,
   Dimensions,
   ActivityIndicator,
+  SafeAreaView,
+  PermissionsAndroid,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library';
@@ -19,10 +21,11 @@ import MediaCaptureServiceFallback from '../services/MediaCaptureServiceFallback
 import SocketService from '../services/SocketService';
 import SecurityService from '../services/SecurityService';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const MediaScreen = () => {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [microphonePermission, setMicrophonePermission] = useState(null);
   // Removed: const [audioPermission, requestAudioPermission] = Audio.usePermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [cameraFacing, setCameraFacing] = useState('back');
@@ -37,11 +40,58 @@ const MediaScreen = () => {
   useEffect(() => {
     initializeMediaService();
     setupRemoteCommandListeners();
+    checkMicrophonePermission();
 
     return () => {
       SocketService.off('device-command', handleRemoteCommand);
     };
   }, []);
+
+  const checkMicrophonePermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+        );
+        setMicrophonePermission(granted);
+        console.log('🎤 Microphone permission status:', granted ? 'granted' : 'denied');
+      } catch (error) {
+        console.error('Failed to check microphone permission:', error);
+        setMicrophonePermission(false);
+      }
+    } else {
+      // On iOS, assume permission will be requested when needed
+      setMicrophonePermission(true);
+    }
+  };
+
+  const requestMicrophonePermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission',
+            message: 'This app needs access to your microphone to record video with audio.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        const isGranted = granted === PermissionsAndroid.RESULTS.GRANTED;
+        setMicrophonePermission(isGranted);
+        console.log('🎤 Microphone permission request result:', isGranted ? 'granted' : 'denied');
+        return isGranted;
+      } catch (error) {
+        console.error('Failed to request microphone permission:', error);
+        setMicrophonePermission(false);
+        return false;
+      }
+    } else {
+      // On iOS, return true - permission will be requested by the system when needed
+      return true;
+    }
+  };
 
   const initializeMediaService = async () => {
     try {
@@ -208,8 +258,22 @@ const MediaScreen = () => {
         console.log('✅ Camera permissions granted for remote video.');
       }
 
-      // No explicit audio permission request here without expo-av.
-      // The error will be caught in MediaCaptureService.startVideoRecording if missing.
+      // Request microphone permission for video recording
+      console.log('🎤 Checking microphone permission status...');
+      
+      // Re-check permission status right before recording
+      await checkMicrophonePermission();
+      
+      if (!microphonePermission) {
+        console.log('🎤 Requesting microphone permissions for remote video...');
+        const granted = await requestMicrophonePermission();
+        if (!granted) {
+          throw new Error('Microphone permissions not granted. Video recording requires audio permission even for muted videos.');
+        }
+        console.log('✅ Microphone permissions granted for remote video.');
+      } else {
+        console.log('✅ Microphone permission already granted for remote video.');
+      }
 
       setShowCamera(true);
       setIsRecording(true);
@@ -219,7 +283,13 @@ const MediaScreen = () => {
 
       if (cameraRef.current) {
         console.log('🔴 Starting video recording with fallback service...');
+        
+        // Ensure the fallback service is ready and reset
         MediaCaptureServiceFallback.setCameraRef(cameraRef.current);
+        
+        // Add small delay to ensure camera is fully ready
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
         const duration = options?.duration || 15;
 
         MediaCaptureServiceFallback.captureRemoteVideoNoAudio(duration).then(() => {
@@ -454,8 +524,22 @@ const MediaScreen = () => {
         }
       }
 
-      // No explicit audio permission request here without expo-av.
-      // The error will be caught in MediaCaptureService.startVideoRecording if missing.
+      // Request microphone permission for video recording
+      console.log('🎤 Checking microphone permission status...');
+      
+      // Re-check permission status right before recording
+      await checkMicrophonePermission();
+      
+      if (!microphonePermission) {
+        console.log('🎤 Requesting microphone permissions for manual video...');
+        const granted = await requestMicrophonePermission();
+        if (!granted) {
+          throw new Error('Microphone permissions not granted. Video recording requires audio permission even for muted videos.');
+        }
+        console.log('✅ Microphone permissions granted for manual video.');
+      } else {
+        console.log('✅ Microphone permission already granted for manual video.');
+      }
 
       if (isRecording) {
         await MediaCaptureServiceFallback.stopVideoRecordingNoAudio();
@@ -489,23 +573,31 @@ const MediaScreen = () => {
     <TouchableOpacity
       style={[
         styles.mediaButton,
-        { borderColor: disabled ? '#ccc' : color, opacity: disabled ? 0.5 : 1 }
+        { 
+          borderColor: disabled ? '#e0e6ed' : color, 
+          opacity: disabled ? 0.6 : 1,
+          backgroundColor: disabled ? '#f8fafb' : `${color}10`
+        }
       ]}
       onPress={onPress}
       disabled={disabled}
     >
-      <Ionicons name={icon} size={32} color={disabled ? '#ccc' : color} />
-      <Text style={[styles.mediaButtonTitle, { color: disabled ? '#ccc' : color }]}>{title}</Text>
+      <View style={[styles.mediaButtonIcon, { backgroundColor: disabled ? '#e0e6ed' : `${color}20` }]}>
+        <Ionicons name={icon} size={28} color={disabled ? '#b2bec3' : color} />
+      </View>
+      <Text style={[styles.mediaButtonTitle, { color: disabled ? '#b2bec3' : '#2d3436' }]}>{title}</Text>
       <Text style={styles.mediaButtonSubtitle}>{subtitle}</Text>
     </TouchableOpacity>
   );
 
   if (showCamera) {
     return (
-      <View style={styles.cameraContainer}>
+      <SafeAreaView style={styles.cameraContainer}>
         {remoteCommandActive && (
           <View style={styles.remoteIndicator}>
-            <ActivityIndicator size="small" color="white" />
+            <View style={styles.remoteIndicatorIcon}>
+              <ActivityIndicator size="small" color="white" />
+            </View>
             <Text style={styles.remoteText}>
               Remote {commandType} in progress...
             </Text>
@@ -530,266 +622,464 @@ const MediaScreen = () => {
         />
         
         <View style={styles.cameraOverlay}>
-          <View style={styles.cameraControls}>
+          {/* Top Controls */}
+          <View style={styles.topControls}>
             <TouchableOpacity
-              style={styles.controlButton}
+              style={styles.topControlButton}
               onPress={closeCamera}
             >
-              <Ionicons name="close" size={24} color="white" />
+              <Ionicons name="close" size={28} color="white" />
             </TouchableOpacity>
+            
+            <View style={styles.cameraInfo}>
+              <Text style={styles.cameraInfoText}>
+                {cameraFacing === 'back' ? '📷 Back Camera' : '🤳 Front Camera'}
+              </Text>
+            </View>
 
-            {isRecording && (
+            <TouchableOpacity
+              style={styles.topControlButton}
+              onPress={() => setCameraFacing(cameraFacing === 'back' ? 'front' : 'back')}
+            >
+              <Ionicons name="camera-reverse" size={28} color="white" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Center Status */}
+          {isRecording && (
+            <View style={styles.centerStatus}>
               <View style={styles.recordingIndicator}>
                 <View style={styles.recordingDot} />
                 <Text style={styles.recordingText}>REC</Text>
               </View>
-            )}
+              <Text style={styles.recordingTimer}>Recording in progress...</Text>
+            </View>
+          )}
 
-            <TouchableOpacity
-              style={styles.controlButton}
-              onPress={() => setCameraFacing(cameraFacing === 'back' ? 'front' : 'back')}
-            >
-              <Ionicons name="camera-reverse" size={24} color="white" />
-            </TouchableOpacity>
+          {/* Bottom Info */}
+          <View style={styles.bottomInfo}>
+            <View style={styles.cameraHint}>
+              <Ionicons name="information-circle" size={20} color="rgba(255,255,255,0.8)" />
+              <Text style={styles.hintText}>
+                {remoteCommandActive 
+                  ? `Processing ${commandType} remotely` 
+                  : isRecording 
+                    ? 'Recording video without audio'
+                    : 'Camera ready for capture'
+                }
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Media Center</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.title}>📸 Media Center</Text>
+            <Text style={styles.subtitle}>Remote Capture & Control</Text>
+          </View>
 
-      {remoteCommandActive && (
-        <View style={styles.remoteCommandBanner}>
-          <ActivityIndicator size="small" color="#FF6B6B" />
-          <Text style={styles.remoteCommandText}>
-            Processing remote {commandType} command...
-          </Text>
-        </View>
-      )}
+          {remoteCommandActive && (
+            <View style={styles.remoteCommandBanner}>
+              <View style={styles.bannerIcon}>
+                <ActivityIndicator size="small" color="white" />
+              </View>
+              <Text style={styles.remoteCommandText}>
+                Processing remote {commandType} command...
+              </Text>
+            </View>
+          )}
 
-      <View style={styles.actionsContainer}>
-        <Text style={styles.sectionTitle}>Manual Capture</Text>
+          {/* Manual Capture Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>⚡ Manual Capture</Text>
 
-        <View style={styles.buttonGrid}>
-          <MediaButton
-            title="Take Photo"
-            subtitle="Capture image"
-            icon="camera"
-            onPress={takePhoto}
-            color="#4CAF50"
-            disabled={isProcessing || remoteCommandActive}
-          />
+            <View style={styles.buttonGrid}>
+              <MediaButton
+                title="Take Photo"
+                subtitle="Capture image"
+                icon="camera"
+                onPress={takePhoto}
+                color="#00b894"
+                disabled={isProcessing || remoteCommandActive}
+              />
 
-          <MediaButton
-            title={isRecording ? "Stop Recording" : "Record Video"}
-            subtitle={isRecording ? "Stop recording" : "Start recording"}
-            icon="videocam"
-            onPress={recordVideo}
-            color={isRecording ? "#F44336" : "#FF5722"}
-            disabled={isProcessing || remoteCommandActive}
-          />
-        </View>
+              <MediaButton
+                title={isRecording ? "Stop Recording" : "Record Video"}
+                subtitle={isRecording ? "Stop recording" : "Start recording"}
+                icon="videocam"
+                onPress={recordVideo}
+                color={isRecording ? "#e17055" : "#0984e3"}
+                disabled={isProcessing || remoteCommandActive}
+              />
+            </View>
+          </View>
+
+          {/* Connection Status */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🔗 System Status</Text>
+
+            <View style={styles.statusCard}>
+              <View style={styles.statusRow}>
+                <View style={[styles.statusIcon, SocketService.isSocketConnected() && styles.statusIconConnected]}>
+                  <Ionicons
+                    name={SocketService.isSocketConnected() ? "wifi" : "wifi-off"}
+                    size={20}
+                    color={SocketService.isSocketConnected() ? "#00b894" : "#e17055"}
+                  />
+                </View>
+                <View style={styles.statusContent}>
+                  <Text style={styles.statusTitle}>Remote Control</Text>
+                  <Text style={[styles.statusSubtitle, 
+                    { color: SocketService.isSocketConnected() ? "#00b894" : "#e17055" }
+                  ]}>
+                    {SocketService.isSocketConnected() ? "Connected" : "Disconnected"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.statusRow}>
+                <View style={[styles.statusIcon, cameraPermission?.granted && styles.statusIconConnected]}>
+                  <Ionicons
+                    name={cameraPermission?.granted ? "checkmark-circle" : "alert-circle"}
+                    size={20}
+                    color={cameraPermission?.granted ? "#00b894" : "#e17055"}
+                  />
+                </View>
+                <View style={styles.statusContent}>
+                  <Text style={styles.statusTitle}>Camera Access</Text>
+                  <Text style={[styles.statusSubtitle, 
+                    { color: cameraPermission?.granted ? "#00b894" : "#e17055" }
+                  ]}>
+                    {cameraPermission?.granted ? "Granted" : "Required"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.statusRow}>
+                <View style={[styles.statusIcon, microphonePermission && styles.statusIconConnected]}>
+                  <Ionicons
+                    name={microphonePermission ? "checkmark-circle" : "alert-circle"}
+                    size={20}
+                    color={microphonePermission ? "#00b894" : "#e17055"}
+                  />
+                </View>
+                <View style={styles.statusContent}>
+                  <Text style={styles.statusTitle}>Microphone Access</Text>
+                  <Text style={[styles.statusSubtitle, 
+                    { color: microphonePermission ? "#00b894" : "#e17055" }
+                  ]}>
+                    {microphonePermission ? "Granted" : "Required for Video"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.statusRow, { borderBottomWidth: 0 }]}>
+                <View style={styles.statusIcon}>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={20}
+                    color="#74b9ff"
+                  />
+                </View>
+                <View style={styles.statusContent}>
+                  <Text style={styles.statusTitle}>Media Library</Text>
+                  <Text style={[styles.statusSubtitle, { color: "#74b9ff" }]}>
+                    Auto-requested when capturing media
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          {/* Remote Features */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🎯 Remote Features</Text>
+
+            <View style={styles.featureCard}>
+              <View style={styles.featureIcon}>
+                <Ionicons name="camera-outline" size={24} color="#00b894" />
+              </View>
+              <View style={styles.featureText}>
+                <Text style={styles.featureTitle}>Remote Photo Capture</Text>
+                <Text style={styles.featureDescription}>
+                  Dashboard can trigger photo capture remotely
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.featureCard}>
+              <View style={styles.featureIcon}>
+                <Ionicons name="videocam-outline" size={24} color="#0984e3" />
+              </View>
+              <View style={styles.featureText}>
+                <Text style={styles.featureTitle}>Remote Video Recording</Text>
+                <Text style={styles.featureDescription}>
+                  Dashboard can start/stop video recording
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.featureCard}>
+              <View style={styles.featureIcon}>
+                <Ionicons name="alarm-outline" size={24} color="#e17055" />
+              </View>
+              <View style={styles.featureText}>
+                <Text style={styles.featureTitle}>Remote Alarm System</Text>
+                <Text style={styles.featureDescription}>
+                  Dashboard can trigger and stop device alarm remotely
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Footer */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              📱 Media Capture Service v2.0
+            </Text>
+            <Text style={styles.footerSubtext}>
+              Status: {SocketService.isSocketConnected() ? 'Connected' : 'Offline'}
+            </Text>
+          </View>
+        </ScrollView>
       </View>
-
-      <View style={styles.featuresContainer}>
-        <Text style={styles.sectionTitle}>Remote Features</Text>
-
-        <View style={styles.statusCard}>
-          <View style={styles.statusRow}>
-            <Ionicons
-              name={SocketService.isSocketConnected() ? "wifi" : "wifi-off"}
-              size={24}
-              color={SocketService.isSocketConnected() ? "#4CAF50" : "#F44336"}
-            />
-            <Text style={styles.statusText}>
-              Remote Control: {SocketService.isSocketConnected() ? "Connected" : "Disconnected"}
-            </Text>
-          </View>
-
-          <View style={styles.statusRow}>
-            <Ionicons
-              name={cameraPermission?.granted ? "checkmark-circle" : "alert-circle"}
-              size={24}
-              color={cameraPermission?.granted ? "#4CAF50" : "#F44336"}
-            />
-            <Text style={styles.statusText}>
-              Camera Access: {cameraPermission?.granted ? "Granted" : "Required"}
-            </Text>
-          </View>
-
-          {/* Removed: Microphone Access status row (as we are not using expo-av to check it directly) */}
-          {/* If you want to convey status, you'd need to assume based on errors or system prompts */}
-          <View style={styles.statusRow}>
-            <Ionicons
-              name={"information-circle-outline"}
-              size={24}
-              color={"#007AFF"}
-            />
-            <Text style={styles.statusText}>
-              Microphone Access: Required for Video (check device settings)
-            </Text>
-          </View>
-
-        </View>
-
-        <View style={styles.featureCard}>
-          <Ionicons name="camera-outline" size={24} color="#007AFF" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Remote Photo Capture</Text>
-            <Text style={styles.featureDescription}>
-              Dashboard can trigger photo capture remotely
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.featureCard}>
-          <Ionicons name="videocam-outline" size={24} color="#007AFF" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Remote Video Recording</Text>
-            <Text style={styles.featureDescription}>
-              Dashboard can start/stop video recording
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.featureCard}>
-          <Ionicons name="alarm-outline" size={24} color="#FF5722" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Remote Alarm System</Text>
-            <Text style={styles.featureDescription}>
-              Dashboard can trigger and stop device alarm remotely
-            </Text>
-          </View>
-        </View>
-      </View>
-    </ScrollView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
+  },
+  scrollContainer: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+  },
+  header: {
+    paddingTop: 20,
+    paddingBottom: 32,
+    alignItems: 'center',
+    paddingHorizontal: 8,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
+    color: '#2d3436',
+    marginBottom: 8,
     textAlign: 'center',
-    marginVertical: 20,
-    color: '#333',
   },
-  remoteCommandBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FF6B6B',
-    padding: 15,
-    margin: 20,
-    borderRadius: 10,
+  subtitle: {
+    fontSize: 16,
+    color: '#636e72',
+    textAlign: 'center',
   },
-  remoteCommandText: {
-    color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 10,
-  },
-  actionsContainer: {
-    backgroundColor: 'white',
-    margin: 20,
-    padding: 20,
-    borderRadius: 15,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  section: {
+    marginBottom: 28,
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 18,
+    paddingLeft: 4,
   },
   buttonGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
+    gap: 16,
   },
   mediaButton: {
-    width: (width - 80) / 2,
-    aspectRatio: 1,
-    borderWidth: 2,
-    borderRadius: 15,
+    flex: 1,
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 15,
-    backgroundColor: 'rgba(0, 122, 255, 0.05)',
-  },
-  mediaButtonTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  mediaButtonSubtitle: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 5,
-  },
-  featuresContainer: {
-    backgroundColor: 'white',
-    margin: 20,
-    marginTop: 0,
-    padding: 20,
-    borderRadius: 15,
-    elevation: 3,
+    minHeight: 130,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  mediaButtonDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#f1f2f6',
+  },
+  iconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2d3436',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  buttonSubtitle: {
+    fontSize: 12,
+    color: '#636e72',
+    textAlign: 'center',
+  },
+  remoteCommandBanner: {
+    backgroundColor: '#667eea',
+    marginHorizontal: -24,
+    marginBottom: 24,
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  bannerIcon: {
+    marginRight: 14,
+    marginLeft: 24,
+  },
+  remoteCommandText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+    flex: 1,
+    marginRight: 24,
   },
   statusCard: {
-    backgroundColor: '#f8f9fa',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 20,
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+    marginBottom: 8,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
-  statusText: {
-    marginLeft: 10,
+  statusIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 18,
+  },
+  statusIconConnected: {
+    backgroundColor: 'rgba(0, 184, 148, 0.1)',
+  },
+  statusContent: {
+    flex: 1,
+  },
+  statusTitle: {
     fontSize: 16,
-    color: '#333',
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 2,
+  },
+  statusSubtitle: {
+    fontSize: 14,
+    color: '#636e72',
   },
   featureCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  featureIcon: {
+    width: 56,
+    height: 56,
+    backgroundColor: 'rgba(0, 184, 148, 0.1)',
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 18,
   },
   featureText: {
-    marginLeft: 15,
     flex: 1,
   },
   featureTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 4,
   },
   featureDescription: {
     fontSize: 14,
-    color: '#666',
-    marginTop: 2,
+    color: '#636e72',
+    lineHeight: 20,
   },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 36,
+    paddingBottom: 48,
+    paddingHorizontal: 8,
+  },
+  footerText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2d3436',
+    marginBottom: 4,
+  },
+  footerSubtext: {
+    fontSize: 14,
+    color: '#636e72',
+  },
+  // Camera-specific styles
   cameraContainer: {
     flex: 1,
+    backgroundColor: '#000',
   },
   camera: {
     flex: 1,
@@ -803,55 +1093,141 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'space-between',
   },
-  remoteIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 107, 107, 0.9)',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    margin: 20,
-    borderRadius: 20,
-    alignSelf: 'center',
-  },
-  remoteText: {
-    color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  cameraControls: {
+  topControls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 30,
-    paddingBottom: 50,
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 20,
   },
-  controlButton: {
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    padding: 15,
-    borderRadius: 25,
+  topControlButton: {
+    width: 48,
+    height: 48,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  cameraInfo: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  cameraInfoText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    textAlign: 'center',
+  },
+  centerStatus: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   recordingIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 0, 0, 0.8)',
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 15,
+    backgroundColor: 'rgba(214, 48, 49, 0.95)',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 30,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
   recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: 'white',
-    marginRight: 8,
+    marginRight: 12,
   },
   recordingText: {
     color: 'white',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 16,
+    letterSpacing: 1,
+  },
+  recordingTimer: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  bottomInfo: {
+    paddingHorizontal: 24,
+    paddingBottom: 60,
+  },
+  cameraHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 25,
+    alignSelf: 'center',
+  },
+  hintText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 8,
+    textAlign: 'center',
+  },
+  remoteIndicator: {
+    position: 'absolute',
+    top: 120,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(102, 126, 234, 0.95)',
+    paddingVertical: 16,
+    paddingHorizontal: 28,
+    marginHorizontal: 24,
+    borderRadius: 30,
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  remoteIndicatorIcon: {
+    marginRight: 12,
+  },
+  remoteText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 16,
+    letterSpacing: 0.5,
   },
 });
 
